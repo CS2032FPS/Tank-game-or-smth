@@ -3,16 +3,26 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cosmic Arena - Final Evolution</title>
+    <title>Cosmic Arena - Developer Build</title>
     <style>
         body { margin: 0; padding: 0; overflow: hidden; background-color: #0b0b1a; font-family: sans-serif; user-select: none; color: white;}
         canvas { display: block; }
         #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+        
+        /* Admin UI */
+        #admin-ui { position: absolute; top: 15px; right: 15px; pointer-events: auto; display: none; }
+        #admin-ui select { padding: 8px; font-size: 16px; font-weight: bold; background: #1a1a2e; color: #6abcf1; border: 2px solid #6abcf1; border-radius: 5px; outline: none; cursor: pointer; }
+        #admin-ui select:hover { background: #2a2a4e; }
     </style>
 </head>
 <body>
     <canvas id="gameCanvas"></canvas>
-    <div id="ui-layer"></div>
+    
+    <div id="ui-layer">
+        <div id="admin-ui">
+            <!-- Populated via JS when Admin Mode is activated -->
+        </div>
+    </div>
 
     <script>
         // --- CONSTANTS & CONFIG ---
@@ -102,11 +112,9 @@
             }
 
             update(game) {
-                // Tracking AI logic
                 if (this.type.includes('drone') || this.type === 'minion' || this.type === 'seeker') {
                     let target = null;
                     if (this.type === 'seeker') {
-                        // Map-wide seeking for Monolith
                         let closest = 99999;
                         [...game.enemies, game.player].forEach(e => {
                             if (e && e.team !== this.team) {
@@ -123,11 +131,10 @@
                         const desiredAngle = Math.atan2(target.y - this.y, target.x - this.x);
                         this.vx += Math.cos(desiredAngle) * 0.8; this.vy += Math.sin(desiredAngle) * 0.8;
                     }
-                    this.vx *= 0.95; this.vy *= 0.95; // Friction
+                    this.vx *= 0.95; this.vy *= 0.95;
                     if(this.owner.markedForDeletion && this.type !== 'seeker') this.hp -= 0.5;
                 }
 
-                // Gravity effects (Antimatter)
                 if (this.type === 'antimatter') {
                     [...game.enemies, ...game.shapes, game.player].forEach(e => {
                         if (e && e.team !== this.team && !e.markedForDeletion) {
@@ -137,31 +144,29 @@
                     });
                 }
                 
-                // Blackhole & AOEs
                 if (this.type === 'blackhole') {
                     this.radius = 40 + Math.sin(this.life*0.1)*5;
                     [...game.enemies, ...game.shapes, game.player].forEach(e => {
                         if (e && e.team !== this.team && !e.markedForDeletion) {
                             const dx = this.x - e.x, dy = this.y - e.y, dist = Math.hypot(dx,dy);
                             if (dist < 400 && dist > 10) { e.x += (dx/dist)*6; e.y += (dy/dist)*6; }
-                            if (dist < this.radius) e.hp -= this.damage * 0.2; // Constant crush dmg
+                            if (dist < this.radius) e.hp -= this.damage * 0.2;
                         }
                     });
                 }
 
                 if (this.type === 'supernova_blast' || this.type === 'shockwave') {
                     this.radius += this.type === 'supernova_blast' ? 40 : 15;
-                    this.life -= 2; // Dies fast
+                    this.life -= 2;
                 }
 
                 if (this.type === 'skimmer' && this.life % 10 === 0) {
                     game.bullets.push(new Bullet(this.x, this.y, this.angle + (this.life*0.2), this.owner, {type:'basic', s:0.5, d:0.5}));
                 }
 
-                // Apply time dilation if slowed
                 let speedMult = this.slowed ? 0.1 : 1;
                 this.x += this.vx * speedMult; this.y += this.vy * speedMult;
-                this.slowed = false; // Reset every frame
+                this.slowed = false; 
                 this.life--;
 
                 if (this.life <= 0 || this.x < 0 || this.x > MAP_WIDTH || this.y < 0 || this.y > MAP_HEIGHT) {
@@ -182,9 +187,9 @@
                     ctx.strokeStyle = this.color; ctx.stroke(); return;
                 } else if (this.type === 'orbital') {
                     ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
-                    if (this.life > 40) { // Warning phase
+                    if (this.life > 40) { 
                         ctx.strokeStyle = 'rgba(255, 0, 0, 0.5)'; ctx.lineWidth = 5; ctx.stroke(); return;
-                    } else { // Strike phase
+                    } else { 
                         ctx.fillStyle = 'rgba(255, 255, 255, 0.8)'; ctx.fill(); return;
                     }
                 } else if (this.type === 'supernova_blast' || this.type === 'shockwave') {
@@ -252,7 +257,7 @@
                 this.xp += amount;
                 while (this.xp >= this.nextLevelXp) {
                     this.xp -= this.nextLevelXp; this.level++; this.skillPoints++;
-                    this.nextLevelXp = EVOLUTION_LEVELS[this.level] || (this.level*200); // Fallback scale
+                    this.nextLevelXp = EVOLUTION_LEVELS[this.level] || (this.level*200);
                     this.hp = this.maxHp;
                 }
             }
@@ -260,7 +265,7 @@
             evolve(newClass) {
                 if (TANK_CLASSES[newClass]) {
                     this.classType = newClass;
-                    this.cooldowns = new Array(this.config.b.length).fill(0);
+                    this.cooldowns = new Array(this.config.b ? this.config.b.length : 0).fill(0);
                     this.hp = this.maxHp; this.radius = this.classType === 'Cosmic Overseer' ? 80 : this.classType === 'The Monolith' ? 50 : 20;
                 }
             }
@@ -335,7 +340,7 @@
                     game.bullets.push(new Bullet(this.x, this.y, 0, this, {type:'toxic_trail', d:0.5}));
                 }
                 if (this.config.passive === 'quasar') {
-                    this.angle += 0.02; // Auto spin for Quasar
+                    this.angle += 0.02; // Auto spin
                 }
                 if (this.config.tesla && game.ticks % 30 === 0) {
                     [...game.enemies, ...game.shapes, game.player].forEach(e => {
@@ -367,7 +372,6 @@
                 ctx.save(); ctx.translate(this.x, this.y); ctx.globalAlpha = this.alpha;
                 
                 if (this.classType === 'Cosmic Overseer') {
-                    // Draw Eye
                     ctx.rotate(this.angle);
                     ctx.beginPath(); ctx.ellipse(0,0, 80, 40, 0, 0, Math.PI*2); ctx.fillStyle = '#fff'; ctx.fill(); ctx.stroke();
                     ctx.beginPath(); ctx.arc(0,0, 30, 0, Math.PI*2); ctx.fillStyle = this.color; ctx.fill();
@@ -417,6 +421,9 @@
                 if (keys['Space']) this.useAbility(game, mouseWorldPos);
                 
                 this.updateTank(game, dx !== 0 || dy !== 0);
+
+                // God Mode HP Lock
+                if (game.adminMode) this.hp = this.maxHp;
                 
                 if (game.isShooting) {
                     if (this.config.ability === 'orbital') this.useAbility(game, mouseWorldPos);
@@ -429,12 +436,11 @@
             constructor(x, y, team) {
                 super(x, y, team);
                 this.wanderTimer = 0; this.target = null;
-                // Force spawn as random high-tier for cosmic chaos
                 this.level = Math.floor(Math.random() * 200) + 20; 
                 let availableTier = 1;
                 for(let i=1; i<EVOLUTION_LEVELS.length; i++) if (this.level >= EVOLUTION_LEVELS[i]) availableTier = i+1;
                 
-                const possibleClasses = getTierClasses(Math.min(availableTier, 20)); // Up to T20 enemies!
+                const possibleClasses = getTierClasses(Math.min(availableTier, 20));
                 this.evolve(randItem(possibleClasses));
                 for(let i=0; i<42; i++) this.upgradeStat(Math.floor(Math.random()*6));
                 this.hp = this.maxHp; this.xpValue = 1000 + (this.level * 200);
@@ -444,7 +450,6 @@
                 let speedMult = this.slowed ? 0.1 : 1; this.slowed = false;
                 let closestDist = 1500; this.target = null;
                 
-                // Aggressive AABB checking for targets
                 const viewR = 1500;
                 const check = (entities) => {
                     for (let e of entities) {
@@ -484,6 +489,9 @@
                 this.canvas = document.getElementById('gameCanvas'); this.ctx = this.canvas.getContext('2d', {alpha: false});
                 this.keys = {}; this.mouseX = 0; this.mouseY = 0; this.isShooting = false;
                 this.camera = { x: MAP_WIDTH/2, y: MAP_HEIGHT/2, zoom: 1 }; this.state = 'PLAYING'; this.ticks = 0;
+                
+                this.adminMode = false; this.keyBuffer = '';
+                
                 this.setupInputs(); this.resize(); window.addEventListener('resize', () => this.resize());
                 this.reset(); requestAnimationFrame(() => this.loop());
             }
@@ -493,6 +501,31 @@
                 this.bullets = []; this.shapes = []; this.enemies = []; this.state = 'PLAYING';
                 for (let i = 0; i < 400; i++) this.shapes.push(new Shape(Math.random()*MAP_WIDTH, Math.random()*MAP_HEIGHT, randItem(['square','triangle','pentagon'])));
                 for (let i = 0; i < 30; i++) this.enemies.push(new EnemyTank(Math.random()*MAP_WIDTH, Math.random()*MAP_HEIGHT, Math.random()>0.5?'red':'blue'));
+                
+                // If reset while admin, re-apply godmode stats/UI sync
+                if (this.adminMode && document.getElementById('class-select')) {
+                    this.player.evolve(document.getElementById('class-select').value);
+                }
+            }
+
+            enableAdminMode() {
+                this.adminMode = true;
+                const adminDiv = document.getElementById('admin-ui');
+                adminDiv.style.display = 'block';
+                
+                let selectHtml = `<select id="class-select">`;
+                Object.keys(TANK_CLASSES).forEach(cls => {
+                    selectHtml += `<option value="${cls}">[T${TANK_CLASSES[cls].tier}] ${cls}</option>`;
+                });
+                selectHtml += `</select>`;
+                adminDiv.innerHTML = selectHtml;
+
+                const selectEl = document.getElementById('class-select');
+                selectEl.value = this.player.classType; // default to current
+                selectEl.addEventListener('change', (e) => {
+                    this.player.evolve(e.target.value);
+                    this.canvas.focus(); // Prevent UI lock
+                });
             }
 
             resize() { this.canvas.width = window.innerWidth; this.canvas.height = window.innerHeight; }
@@ -501,10 +534,22 @@
                 window.addEventListener('keydown', e => {
                     this.keys[e.code] = true;
                     if (this.state === 'PLAYING' && this.player.skillPoints > 0 && e.key >= '1' && e.key <= '6') this.player.upgradeStat(parseInt(e.key)-1);
+                    
+                    // Secret Passcode Tracker
+                    if (e.key && e.key.length === 1) {
+                        this.keyBuffer += e.key.toUpperCase();
+                        if (this.keyBuffer.length > 20) this.keyBuffer = this.keyBuffer.slice(-20);
+                        if (this.keyBuffer.includes('CS2032FPS') && !this.adminMode) {
+                            this.enableAdminMode();
+                        }
+                    }
                 });
                 window.addEventListener('keyup', e => this.keys[e.code] = false);
                 window.addEventListener('mousemove', e => { this.mouseX = e.clientX; this.mouseY = e.clientY; });
                 window.addEventListener('mousedown', e => {
+                    // Prevent shooting if clicking on the HTML select dropdown
+                    if (e.target.tagName === 'SELECT' || e.target.tagName === 'OPTION') return;
+
                     if (e.button === 0) {
                         if (this.state === 'GAMEOVER') this.reset();
                         else if (this.activeEvolutions && this.activeEvolutions.length > 0) {
@@ -523,12 +568,15 @@
 
             handlePhysics(e1, e2, dmg) {
                 const dx = Math.abs(e1.x - e2.x), dy = Math.abs(e1.y - e2.y), maxR = e1.radius + e2.radius;
-                if (dx > maxR || dy > maxR) return; // AABB Optimization!
+                if (dx > maxR || dy > maxR) return;
                 
                 const dist = Math.hypot(dx, dy);
                 if (dist < maxR) {
                     if (e1.team !== e2.team) {
-                        e1.hp -= dmg; e2.hp -= dmg;
+                        // God mode skip logic
+                        if (!(this.adminMode && e1 === this.player)) e1.hp -= dmg;
+                        if (!(this.adminMode && e2 === this.player)) e2.hp -= dmg;
+                        
                         if (e1.hp<=0 && e2.addXp && e1.xpValue) e2.addXp(e1.xpValue);
                         if (e2.hp<=0 && e1.addXp && e2.xpValue) e1.addXp(e2.xpValue);
                     }
@@ -546,9 +594,8 @@
                 this.ticks++;
 
                 this.player.update(this.keys, this.getMouseWorldPos(), this);
-                if (this.player.hp <= 0) this.state = 'GAMEOVER';
+                if (this.player.hp <= 0 && !this.adminMode) this.state = 'GAMEOVER';
 
-                // Smooth Camera
                 const targetZoom = 1 / (this.player.config.fov || 1);
                 this.camera.zoom += (targetZoom - this.camera.zoom) * 0.05;
                 this.camera.x += (this.player.x - this.camera.x) * 0.1;
@@ -558,23 +605,27 @@
                 this.shapes.forEach(s => s.update());
                 this.enemies.forEach(e => e.update(this));
 
-                // AABB Optimized Collisions
                 const all = [this.player, ...this.enemies, ...this.shapes].filter(e => !e.markedForDeletion);
                 for (let i = this.bullets.length - 1; i >= 0; i--) {
                     const b = this.bullets[i];
-                    if (b.life > 40 && b.type === 'orbital') continue; // Warning phase, no damage
+                    if (b.life > 40 && b.type === 'orbital') continue;
 
                     for (let j = 0; j < all.length; j++) {
                         const e = all[j];
                         if (b.team === e.team) continue;
                         
-                        // AABB check avoids hypot lag
                         if (Math.abs(b.x - e.x) > b.radius + e.radius || Math.abs(b.y - e.y) > b.radius + e.radius) continue;
                         
                         if (Math.hypot(b.x - e.x, b.y - e.y) < b.radius + e.radius) {
                             const dmg = Math.min(b.hp, e.hp);
-                            if (['laser','railgun','supernova_blast','shockwave','orbital'].includes(b.type)) { e.hp -= b.damage; } // Piercing
-                            else { e.hp -= b.damage; b.hp -= dmg; }
+                            
+                            // God Mode dmg shield for Player
+                            if (!(this.adminMode && e === this.player)) {
+                                if (['laser','railgun','supernova_blast','shockwave','orbital'].includes(b.type)) { e.hp -= b.damage; }
+                                else { e.hp -= b.damage; b.hp -= dmg; }
+                            } else {
+                                b.hp -= dmg; // Bullet still degrades against god player
+                            }
 
                             if (e.hp <= 0) {
                                 e.markedForDeletion = true;
@@ -624,13 +675,19 @@
 
                 if (this.player.config.ability) {
                     this.ctx.fillStyle = this.player.abilityCooldown <= 0 ? '#6abcf1' : '#555';
-                    this.ctx.font = 'bold 16px sans-serif'; this.ctx.textAlign = 'right';
-                    this.ctx.fillText(`[SPACE] Ability Ready`, this.canvas.width - 20, this.canvas.height - 20);
+                    this.ctx.font = 'bold 16px sans-serif'; this.ctx.textAlign = 'left';
+                    this.ctx.fillText(`[SPACE] Ability Ready`, 20, 30);
                 }
 
-                // Evolution UI
+                if (this.adminMode) {
+                    this.ctx.fillStyle = '#ff3366';
+                    this.ctx.font = 'bold 24px sans-serif';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.fillText(`ADMIN MODE ENABLED [GOD MODE]`, this.canvas.width / 2, 40);
+                }
+
                 let currentTierIdx = this.player.config.tier;
-                if (currentTierIdx < EVOLUTION_LEVELS.length && this.player.level >= EVOLUTION_LEVELS[currentTierIdx]) {
+                if (currentTierIdx < EVOLUTION_LEVELS.length && this.player.level >= EVOLUTION_LEVELS[currentTierIdx] && !this.adminMode) {
                     this.activeEvolutions = getTierClasses(currentTierIdx + 1);
                     if (this.activeEvolutions.length > 0) {
                         this.ctx.fillStyle = 'rgba(0,0,0,0.8)'; this.ctx.fillRect(0, 0, this.canvas.width, 150);
@@ -655,7 +712,6 @@
                 this.ctx.scale(this.camera.zoom, this.camera.zoom);
                 this.ctx.translate(-this.camera.x, -this.camera.y);
 
-                // Grid optimizations
                 this.ctx.strokeStyle = 'rgba(255,255,255,0.05)'; this.ctx.lineWidth = 2; this.ctx.beginPath();
                 const viewW = this.canvas.width / this.camera.zoom, viewH = this.canvas.height / this.camera.zoom;
                 const startX = Math.max(0, Math.floor((this.camera.x - viewW/2)/GRID_SIZE)*GRID_SIZE);
@@ -668,13 +724,11 @@
                 
                 this.ctx.strokeStyle = '#555'; this.ctx.lineWidth = 10; this.ctx.strokeRect(0, 0, MAP_WIDTH, MAP_HEIGHT);
 
-                // Draw order matters
                 this.shapes.forEach(s => s.draw(this.ctx));
                 this.enemies.forEach(e => e.draw(this.ctx));
                 this.bullets.forEach(b => { if (b.type !== 'orbital') b.draw(this.ctx); });
                 if (this.state === 'PLAYING') this.player.draw(this.ctx);
                 
-                // Draw orbitals last so they appear over everything
                 this.bullets.forEach(b => { if (b.type === 'orbital') b.draw(this.ctx); });
 
                 this.ctx.restore();
