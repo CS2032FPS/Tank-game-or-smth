@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tank Arena Game - Cosmic Update</title>
+    <style>
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #0d0d1a; font-family: 'Segoe UI', sans-serif; user-select: none; }
+        canvas { display: block; cursor: crosshair; }
+        #uiLayer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+        
+        #gameOverScreen { display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.8); padding: 40px; border-radius: 10px; text-align: center; color: white; pointer-events: auto; }
+        #gameOverScreen button { padding: 10px 20px; font-size: 20px; cursor: pointer; background: #00b2e1; color: white; border: none; border-radius: 5px; font-weight: bold; }
+        
+        #xpContainer { position: absolute; bottom: 0; left: 0; width: 100%; height: 24px; background: #222; display: flex; align-items: center; justify-content: center; z-index: 10; border-top: 2px solid #555; }
+        #xpBar { position: absolute; bottom: 0; left: 0; height: 100%; width: 0%; background: linear-gradient(90deg, #f1c40f, #e74c3c); transition: width 0.1s linear; }
+        #levelText { position: relative; color: white; font-weight: bold; font-size: 14px; text-shadow: 1px 1px 2px black; }
+
+        #evolutionPanel { position: absolute; top: 20px; left: 20px; display: none; flex-direction: column; gap: 10px; pointer-events: auto; background: rgba(0,0,0,0.7); padding: 15px; border-radius: 8px; border: 2px solid #00b2e1; }
+        #evolutionPanel h3 { color: white; margin: 0 0 10px 0; text-align: center; }
+        .evo-btn { background: #00b2e1; color: white; border: 2px solid #555; padding: 10px; border-radius: 5px; cursor: pointer; font-weight: bold; text-align: center; text-transform: uppercase; }
+        .evo-btn:hover { background: #0093ba; border-color: white; box-shadow: 0 0 10px #00b2e1; }
+        
+        #upgradePanel { position: absolute; bottom: 40px; left: 20px; display: flex; flex-direction: column; gap: 5px; pointer-events: auto; }
+        .upgrade-btn { display: none; background: rgba(0,0,0,0.6); color: white; padding: 5px 15px; border-radius: 5px; cursor: pointer; border: 2px solid #555; font-size: 14px; width: 220px; justify-content: space-between; align-items: center; }
+        .upgrade-btn:hover { border-color: #f1c40f; }
+        .stat-blocks { display: flex; gap: 2px; }
+        .stat-block { width: 8px; height: 12px; background: #333; }
+        .stat-block.filled { background: #00b2e1; }
+    </style>
+</head>
+<body oncontextmenu="return false;">
+
+<div id="uiLayer">
+    <div id="evolutionPanel"><h3>Class Upgrade!</h3><div id="evoButtons"></div></div>
+    <div id="upgradePanel"></div>
+    <div id="xpContainer"><div id="xpBar"></div><div id="levelText">Lvl 1</div></div>
+    <div id="gameOverScreen"><h1>Reality Collapsed</h1><button id="restartBtn">Reconstruct</button></div>
+</div>
+
+<canvas id="gameCanvas"></canvas>
+
+<script>
+    const distance = (x1, y1, x2, y2) => Math.hypot(x2 - x1, y2 - y1);
+    function drawHealthBar(ctx, x, y, w, h, hp, maxHp, always=false) {
+        if (!always && hp >= maxHp) return;
+        let pct = Math.max(0, hp / maxHp);
+        ctx.fillStyle = '#222'; ctx.fillRect(x - w/2, y, w, h);
+        ctx.fillStyle = pct > 0.5 ? '#86c921' : pct > 0.2 ? '#f1c40f' : '#e74c3c'; 
+        ctx.fillRect(x - w/2, y, w * pct, h);
+        ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.strokeRect(x - w/2, y, w, h);
+    }
+
+    const TANK_CLASSES = {
+        // TIERS 1-10
+        'basic': { name: 'Basic', fov: 1, nextTierLvl: 5, upgradesTo: ['twin', 'sniper', 'machine_gun'], barrels: [{w:20, l:35}] },
+        'twin': { name: 'Twin', fov: 1, nextTierLvl: 10, upgradesTo: ['quad'], barrels: [{w:18, l:35, y:-12}, {w:18, l:35, y:12, delay:0.5}] },
+        'sniper': { name: 'Sniper', fov: 1.2, nextTierLvl: 10, upgradesTo: ['assassin'], barrels: [{w:18, l:45, speedMult:1.5, dmgMult:1.5, reloadMult:1.5}] },
+        'machine_gun': { name: 'Machine Gun', fov: 1, nextTierLvl: 10, upgradesTo: ['destroyer'], barrels: [{w:25, l:35, spread:0.2, reloadMult:0.5}] },
+        'quad': { name: 'Quad', fov: 1, nextTierLvl: 15, upgradesTo: ['octo'], barrels: [{w:20, l:35, a:0}, {w:20, l:35, a:Math.PI/2}, {w:20, l:35, a:Math.PI}, {w:20, l:35, a:-Math.PI/2}] },
+        'assassin': { name: 'Assassin', fov: 1.4, nextTierLvl: 15, upgradesTo: ['ranger'], barrels: [{w:18, l:55, speedMult:1.8, dmgMult:1.8, reloadMult:2}] },
+        'destroyer': { name: 'Destroyer', fov: 1, nextTierLvl: 15, upgradesTo: ['annihilator'], barrels: [{w:35, l:40, speedMult:0.6, dmgMult:3, reloadMult:3, recoil:15, sizeMult:2}] },
+        'octo': { name: 'Octo', fov: 1, nextTierLvl: 20, upgradesTo: ['pentashot'], barrels: Array.from({length:8}).map((_,i)=>({w:20, l:35, a: (Math.PI/4)*i})) },
+        'ranger': { name: 'Ranger', fov: 1.6, nextTierLvl: 20, upgradesTo: ['stalker'], barrels: [{w:18, l:65, speedMult:2, dmgMult:2, reloadMult:2.2}] },
+        'annihilator': { name: 'Annihilator', fov: 1, nextTierLvl: 20, upgradesTo: ['skimmer'], barrels: [{w:45, l:45, speedMult:0.6, dmgMult:4, reloadMult:3.5, recoil:25, sizeMult:2.5}] },
+        'pentashot': { name: 'Pentashot', fov: 1, nextTierLvl: 25, upgradesTo: ['fighter'], barrels: [-0.4, -0.2, 0, 0.2, 0.4].map(a => ({w:16, l: 35 - Math.abs(a*20), a: a, recoil: 2})) },
+        'stalker': { name: 'Stalker', fov: 1.5, nextTierLvl: 25, upgradesTo: ['overlord'], special: 'invis', barrels: [{w:18, l:60, speedMult:1.8, dmgMult:2, reloadMult:2}] },
+        'skimmer': { name: 'Skimmer', fov: 1, nextTierLvl: 25, upgradesTo: ['necromancer'], barrels: [{w:25, l:45, type: 'skimmer'}] },
+        'fighter': { name: 'Fighter', fov: 1, nextTierLvl: 30, upgradesTo: ['battleship'], barrels: [{w:20, l:35, a:0}, {w:16, l:25, a:2.5, recoil:3}, {w:16, l:25, a:-2.5, recoil:3}] },
+        'overlord': { name: 'Overlord', fov: 1.2, nextTierLvl: 30, upgradesTo: ['factory'], special: 'drone_spawner', maxDrones: 8, barrels: [{w:25, l:25, a:0},{w:25, l:25, a:Math.PI/2},{w:25, l:25, a:Math.PI},{w:25, l:25, a:-Math.PI/2}] },
+        'necromancer': { name: 'Necromancer', fov: 1.2, nextTierLvl: 30, upgradesTo: ['auto_gunner'], special: 'necromancy', maxDrones: 20, barrels: [{w:35, l:25, a:0}] },
+        'battleship': { name: 'Battleship', fov: 1, nextTierLvl: 35, upgradesTo: ['artillery'], special: 'micro_drones', barrels: [{w:15,l:30,a:Math.PI/2},{w:15,l:30,a:-Math.PI/2}] },
+        'factory': { name: 'Factory', fov: 1.1, nextTierLvl: 35, upgradesTo: ['laser_cannon'], special: 'minions', barrels: [{w:30, l:40}] },
+        'auto_gunner': { name: 'Auto-Gunner', fov: 1, nextTierLvl: 35, upgradesTo: ['tesla_coil'], barrels: [{w:16, l:35, a:0}, {w:16, l:35, a:0.2}, {w:16, l:35, a:-0.2}], autoTurrets: [{l:25, w:10, range:600, rate:10}] },
+        'artillery': { name: 'Artillery', fov: 1.2, nextTierLvl: 40, upgradesTo: ['plasma_emitter'], barrels: [{w:25, l:50, type: 'shrapnel'}] },
+        'laser_cannon': { name: 'Laser Cannon', fov: 1, nextTierLvl: 40, upgradesTo: ['railgun'], special: 'laser', barrels: [{w:15, l:40}] },
+        'tesla_coil': { name: 'Tesla Coil', fov: 1, nextTierLvl: 40, upgradesTo: ['orbiting_swarm'], special: 'aoe', barrels: [] },
+        'plasma_emitter': { name: 'Plasma Emitter', fov: 1, nextTierLvl: 45, upgradesTo: ['mothership'], barrels: [{w:30, l:35, type: 'plasma'}] },
+        'railgun': { name: 'Railgun', fov: 1.5, nextTierLvl: 45, upgradesTo: ['dreadnought'], special: 'railgun', barrels: [{w:12, l:70}] },
+        'orbiting_swarm': { name: 'Orbiting Swarm', fov: 1, nextTierLvl: 45, upgradesTo: ['mothership'], special: 'orbiting', barrels: [{w:20, l:35}] },
+        'mothership': { name: 'Mothership', fov: 1.4, nextTierLvl: 50, upgradesTo: ['antimatter_caster'], special: 'drone_spawner', maxDrones: 30, barrels: Array.from({length:12}).map((_,i)=>({w:15, l:25, a: (Math.PI/6)*i})) },
+        'dreadnought': { name: 'Dreadnought', fov: 1.3, nextTierLvl: 50, upgradesTo: ['antimatter_caster'], sizeMult: 2, autoTurrets: Array.from({length:6}).map((_,i)=>({l:25, w:12, a:(Math.PI/3)*i, x: 20*Math.cos((Math.PI/3)*i), y: 20*Math.sin((Math.PI/3)*i), range:700, rate:15})), barrels: [{w:30, l:45}] },
+        
+        // TIERS 11-20 (GOD TIER COSMIC)
+        'antimatter_caster': { name: 'Tier 11: Antimatter Caster', fov: 1.5, nextTierLvl: 55, upgradesTo: ['singularity_engine'], barrels: [{w:25,l:45,type:'antimatter', speedMult:0.8, reloadMult:1.5}] },
+        'singularity_engine': { name: 'Tier 12: Singularity Engine', fov: 1.6, nextTierLvl: 60, upgradesTo: ['chrono_tank'], barrels: [{w:35,l:35,type:'black_hole', speedMult:0.5, reloadMult:3}] },
+        'chrono_tank': { name: 'Tier 13: Chrono-Tank', fov: 1.6, nextTierLvl: 65, upgradesTo: ['dimensional_rift'], special: 'chrono', barrels: [{w:20,l:45, speedMult:1.5}] },
+        'dimensional_rift': { name: 'Tier 14: Dimensional Rift', fov: 1.7, nextTierLvl: 70, upgradesTo: ['star_eater'], special: 'teleport', barrels: [{w:20,l:40}] },
+        'star_eater': { name: 'Tier 15: Star-Eater', fov: 1.8, nextTierLvl: 75, upgradesTo: ['supernova'], special: 'star_eater', barrels: [{w:25,l:50, dmgMult:2}] },
+        'supernova': { name: 'Tier 16: Supernova', fov: 1.8, nextTierLvl: 80, upgradesTo: ['nebula_weaver'], special: 'supernova', barrels: [{w:25,l:45}] },
+        'nebula_weaver': { name: 'Tier 17: Nebula Weaver', fov: 1.8, nextTierLvl: 85, upgradesTo: ['quasar'], special: 'nebula', barrels: [{w:20,l:40, spread:0.1}] },
+        'quasar': { name: 'Tier 18: Quasar', fov: 2.0, nextTierLvl: 90, upgradesTo: ['monolith'], special: 'quasar', barrels: [] },
+        'monolith': { name: 'Tier 19: The Monolith', fov: 2.2, nextTierLvl: 100, upgradesTo: ['cosmic_overseer'], special: 'monolith', barrels: [{w:40,l:60,type:'seeking', reloadMult:1.5, dmgMult:5}] },
+        'cosmic_overseer': { name: 'Tier 20: Cosmic Overseer', fov: 3.5, nextTierLvl: 999, special: 'overseer', barrels: [] }
+    };
+
+    Object.values(TANK_CLASSES).forEach(t => {
+        if(!t.barrels) t.barrels = [];
+        t.barrels.forEach(b => {
+            b.x=b.x||0; b.y=b.y||0; b.a=b.a||0; b.w=b.w||20; b.l=b.l||35; b.delay=b.delay||0; b.spread=b.spread||0; b.recoil=b.recoil||1;
+            b.speedMult=b.speedMult||1; b.dmgMult=b.dmgMult||1; b.reloadMult=b.reloadMult||1; b.sizeMult=b.sizeMult||1;
+        });
+        if(!t.autoTurrets) t.autoTurrets = [];
+        t.autoTurrets.forEach(at => { at.x=at.x||0; at.y=at.y||0; at.a=at.a||0; at.range=at.range||500; at.rate=at.rate||20; });
+    });
+
+    class Effect {
+        constructor(game, x, y, type) {
+            this.game = game; this.x = x; this.y = y; this.type = type;
+            this.life = 0; this.marked = false;
+            if(type === 'explosion') { this.maxLife = 20; this.radius = 200; this.dmg = 100; }
+            if(type === 'trail') { this.maxLife = 300; this.radius = 60; this.dmg = 5; }
+            if(type === 'orbital_strike') { this.maxLife = 80; this.radius = 400; this.dmg = 500; }
+            if(type === 'supernova') { this.maxLife = 60; this.radius = 4000; } // Screen clear
+        }
+        update() {
+            this.life++;
+            if(this.life > this.maxLife) this.marked = true;
+
+            let checkDmg = (rad, amt) => {
+                this.game.shapes.forEach(s => { if(distance(this.x,this.y,s.x,s.y) < rad) s.hp -= amt; });
+            };
+
+            if(this.type === 'explosion' && this.life === 2) checkDmg(this.radius, this.dmg);
+            if(this.type === 'trail' && this.life % 15 === 0) checkDmg(this.radius, this.dmg);
+            if(this.type === 'orbital_strike' && this.life === 60) checkDmg(this.radius, this.dmg);
+        }
+        draw(ctx) {
+            if(this.type === 'explosion') {
+                ctx.beginPath(); ctx.arc(this.x, this.y, (this.life/this.maxLife)*this.radius, 0, Math.PI*2);
+                ctx.fillStyle = `rgba(100, 255, 255, ${1 - this.life/this.maxLife})`; ctx.fill();
+            }
+            if(this.type === 'trail') {
+                ctx.beginPath(); ctx.arc(this.x, this.y, this.radius, 0, Math.PI*2);
+                ctx.fillStyle = `rgba(180, 50, 255, ${(1 - this.life/this.maxLife)*0.4})`; ctx.fill();
+            }
+            if(this.type === 'orbital_strike') {
+                if(this.life < 60) {
+                    ctx.beginPath(); ctx.arc(this.x, this.y, this.radius, 0, Math.PI*2);
+                    ctx.strokeStyle = `rgba(255,50,50,${this.life/60})`; ctx.lineWidth = 8; ctx.stroke();
+                    ctx.beginPath(); ctx.arc(this.x, this.y, 10, 0, Math.PI*2); ctx.fillStyle='red'; ctx.fill();
+                } else {
+                    ctx.beginPath(); ctx.arc(this.x, this.y, this.radius, 0, Math.PI*2);
+                    ctx.fillStyle = `rgba(255, 255, 255, ${1 - (this.life-60)/20})`; ctx.fill();
+                }
+            }
+            if(this.type === 'supernova') {
+                ctx.beginPath(); ctx.arc(this.x, this.y, (this.life/this.maxLife)*this.radius, 0, Math.PI*2);
+                ctx.fillStyle = `rgba(255, 200, 50, ${1 - this.life/this.maxLife})`; ctx.fill();
+            }
+        }
+    }
+
+    class Shape {
+        constructor(game, x, y, type) {
+            this.game = game; this.x = x; this.y = y; this.type = type;
+            this.vx = 0; this.vy = 0;
+            this.angle = Math.random() * Math.PI*2; this.rotSpeed = (Math.random()-0.5)*0.02;
+            this.marked = false;
+            
+            let t = [[4, '#ffe869', 15, 10, 10, 20], [3, '#fc7677', 18, 25, 15, 50], [5, '#768dfc', 25, 50, 25, 200]][type];
+            this.sides = t[0]; this.color = t[1]; this.radius = t[2];
+            this.maxHp = t[3]; this.damage = t[4]; this.xp = t[5];
+            this.hp = this.maxHp;
+        }
+        update() {
+            this.angle += this.rotSpeed;
+            
+            // Chrono slow
+            let speedMod = 1;
+            if(this.game.player.tank.special === 'chrono' && distance(this.x, this.y, this.game.player.x, this.game.player.y) < 800) speedMod = 0.1;
+            
+            this.x += this.vx * speedMod; this.y += this.vy * speedMod;
+            this.vx *= 0.9; this.vy *= 0.9; // Friction
+            
+            if (this.hp <= 0) this.marked = true;
+            this.x = Math.max(this.radius, Math.min(this.game.w - this.radius, this.x));
+            this.y = Math.max(this.radius, Math.min(this.game.h - this.radius, this.y));
+        }
+        draw(ctx) {
+            ctx.save(); ctx.translate(this.x, this.y); ctx.rotate(this.angle); ctx.beginPath();
+            for (let i=0; i<this.sides; i++) {
+                let a = (Math.PI*2/this.sides)*i - Math.PI/2;
+                let dx = Math.cos(a)*this.radius, dy = Math.sin(a)*this.radius;
+                if(i===0) ctx.moveTo(dx, dy); else ctx.lineTo(dx, dy);
+            }
+            ctx.closePath(); ctx.fillStyle = this.color; ctx.fill();
+            ctx.lineWidth=3; ctx.strokeStyle='#333'; ctx.stroke(); ctx.restore();
+            drawHealthBar(ctx, this.x, this.y + this.radius + 10, 30, 6, this.hp, this.maxHp);
+        }
+    }
+
+    class Bullet {
+        constructor(game, x, y, angle, owner, speed, damage, hp, radius, type='standard') {
+            this.game = game; this.x = x; this.y = y; this.owner = owner;
+            this.speed = speed; this.vx = Math.cos(angle)*this.speed; this.vy = Math.sin(angle)*this.speed;
+            this.radius = radius; this.color = owner === 'player' ? '#00b2e1' : '#f14e54';
+            this.life = 0; this.maxLife = type==='plasma'?250: type==='black_hole'?300 : 120;
+            this.hp = hp; this.maxHp = hp; this.damage = damage;
+            this.type = type; this.marked = false;
+        }
+        update() {
+            this.life++;
+            if(this.type === 'plasma') { this.vx *= 0.96; this.vy *= 0.96; }
+            
+            // Tier 12 Black hole physics
+            if(this.type === 'black_hole') {
+                this.vx *= 0.9; this.vy *= 0.9;
+                this.game.shapes.forEach(s => {
+                    let d = distance(this.x, this.y, s.x, s.y);
+                    if(d < 600) {
+                        let pull = 1500 / Math.max(d, 10);
+                        s.vx -= Math.cos(Math.atan2(s.y - this.y, s.x - this.x)) * pull;
+                        s.vy -= Math.sin(Math.atan2(s.y - this.y, s.x - this.x)) * pull;
+                        if(d < 60) s.hp -= this.damage * 0.1; // continuous crush
+                    }
+                });
+            }
+            
+            // Tier 11 Antimatter physics
+            if(this.type === 'antimatter') {
+                this.game.shapes.forEach(s => {
+                    let d = distance(this.x, this.y, s.x, s.y);
+                    if(d < 300) {
+                        let pull = 300 / Math.max(d, 10);
+                        s.vx -= Math.cos(Math.atan2(s.y - this.y, s.x - this.x)) * pull;
+                        s.vy -= Math.sin(Math.atan2(s.y - this.y, s.x - this.x)) * pull;
+                    }
+                });
+            }
+
+            // Tier 19 Seeking
+            if(this.type === 'seeking') {
+                let target = null, minDist = Infinity;
+                this.game.shapes.forEach(s => {
+                    let d = distance(this.x, this.y, s.x, s.y);
+                    if(d < minDist) { minDist = d; target = s; }
+                });
+                if(target) {
+                    let a = Math.atan2(target.y - this.y, target.x - this.x);
+                    let ca = Math.atan2(this.vy, this.vx);
+                    let diff = a - ca;
+                    while(diff < -Math.PI) diff += Math.PI*2; while(diff > Math.PI) diff -= Math.PI*2;
+                    ca += diff * 0.05;
+                    let s = Math.hypot(this.vx, this.vy);
+                    this.vx = Math.cos(ca)*s; this.vy = Math.sin(ca)*s;
+                }
+            }
+
+            let speedMod = 1;
+            if(this.game.player.tank.special === 'chrono' && this.owner !== 'player' && distance(this.x, this.y, this.game.player.x, this.game.player.y) < 800) speedMod = 0.1;
+
+            this.x += this.vx * speedMod; this.y += this.vy * speedMod;
+            if (this.life > this.maxLife || this.hp <= 0) this.marked = true;
+            if (this.x<0 || this.x>this.game.w || this.y<0 || this.y>this.game.h) this.marked = true;
+        }
+        draw(ctx) {
+            ctx.beginPath(); ctx.arc(this.x, this.y, this.radius, 0, Math.PI*2);
+            if(this.type==='black_hole') {
+                ctx.fillStyle = 'black'; ctx.fill();
+                ctx.strokeStyle = '#c0392b'; ctx.lineWidth = 3; ctx.stroke();
+                ctx.beginPath(); ctx.arc(this.x, this.y, 600, 0, Math.PI*2);
+                ctx.fillStyle = 'rgba(0,0,0,0.1)'; ctx.fill();
+            } else if(this.type==='antimatter') {
+                ctx.fillStyle = '#2c3e50'; ctx.fill();
+                ctx.strokeStyle = '#8e44ad'; ctx.lineWidth = 3; ctx.stroke();
+            } else if(this.type==='plasma') {
+                ctx.fillStyle = '#e74c3c'; ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
+            } else {
+                ctx.fillStyle = this.color; ctx.fill(); ctx.lineWidth=2; ctx.strokeStyle='#333'; ctx.stroke();
+            }
+        }
+    }
+
+    class Player {
+        constructor(game) {
+            this.game = game;
+            this.level = 1; this.xp = 0; this.maxXp = 30; this.skillPoints = 0;
+            this.statLevels = { maxHealth:0, healthRegen:0, bulletSpeed:0, bulletDamage:0, reloadSpeed:0, moveSpeed:0 };
+            this.resetState();
+        }
+
+        get maxHp() { return (100 + this.statLevels.maxHealth * 25) * (this.tankClassId === 'monolith'? 50 : 1); }
+        get healthRegen() { return 0.05 + (this.statLevels.healthRegen * 0.1); }
+        get moveSpeed() { return this.tankClassId === 'monolith' ? 0 : 5.5 + (this.statLevels.moveSpeed * 0.6); }
+        get bulletSpeed() { return 10 + (this.statLevels.bulletSpeed * 2.5); }
+        get bulletDamage() { return 15 + (this.statLevels.bulletDamage * 8); }
+        get fireRate() { return Math.max(5, 25 - (this.statLevels.reloadSpeed * 2.5)); }
+
+        resetState() {
+            this.x = this.game.w/2; this.y = this.game.h/2;
+            this.level = 1; this.xp = 0; this.maxXp = 30; this.skillPoints = 0;
+            for(let key in this.statLevels) this.statLevels[key] = 0;
+            this.setTankClass('basic');
+            this.hp = this.maxHp; this.color = '#00b2e1';
+            this.game.updateUI();
+        }
+
+        setTankClass(id) {
+            this.tankClassId = id; this.tank = TANK_CLASSES[id];
+            this.radius = 20 * (this.tank.sizeMult || 1);
+            this.fireCooldown = 0; this.abilityCooldown = 0;
+            this.turretAngles = this.tank.autoTurrets.map(t => t.a);
+            this.turretCooldowns = this.tank.autoTurrets.map(t => 0);
+            this.quasarAngle = 0;
+            this.hp = this.maxHp; // Heal on evolve
+        }
+
+        gainXp(amt) {
+            this.xp += amt;
+            let leveled = false;
+            while (this.xp >= this.maxXp) {
+                this.xp -= this.maxXp; this.level++; this.skillPoints++;
+                this.maxXp = Math.floor(this.maxXp * 1.4); // Exponential cosmic scaling
+                leveled = true;
+            }
+            if (leveled) {
+                this.hp = Math.min(this.maxHp, this.hp + this.maxHp * 0.3);
+                if (this.level >= this.tank.nextTierLvl && this.tank.upgradesTo) {
+                    this.game.showEvolutionMenu(this.tank.upgradesTo);
+                }
+            }
+            this.game.updateUI();
+        }
+
+        update() {
+            if (this.game.state !== 'PLAYING') return;
+            if (this.hp < this.maxHp) this.hp = Math.min(this.maxHp, this.hp + this.healthRegen);
+            if (this.hp <= 0) { this.game.setGameOver(); return; }
+
+            let dx = 0, dy = 0;
+            if (this.game.keys['KeyW'] || this.game.keys['ArrowUp']) dy -= 1;
+            if (this.game.keys['KeyS'] || this.game.keys['ArrowDown']) dy += 1;
+            if (this.game.keys['KeyA'] || this.game.keys['ArrowLeft']) dx -= 1;
+            if (this.game.keys['KeyD'] || this.game.keys['ArrowRight']) dx += 1;
+
+            let moving = dx !== 0 || dy !== 0;
+            if (moving && this.tankClassId !== 'monolith') {
+                const len = Math.sqrt(dx*dx + dy*dy);
+                this.x += (dx/len) * this.moveSpeed; this.y += (dy/len) * this.moveSpeed;
+            }
+
+            this.x = Math.max(this.radius, Math.min(this.game.w - this.radius, this.x));
+            this.y = Math.max(this.radius, Math.min(this.game.h - this.radius, this.y));
+
+            let mx = this.game.mouse.x + this.game.camera.x;
+            let my = this.game.mouse.y + this.game.camera.y;
+            this.angle = Math.atan2(my - this.y, mx - this.x);
+            
+            if(this.abilityCooldown > 0) this.abilityCooldown--;
+
+            // Tier 14: Dimensional Rift (Teleport)
+            if (this.tank.special === 'teleport' && this.game.mouse.rightDown && this.abilityCooldown <= 0) {
+                this.game.effects.push(new Effect(this.game, this.x, this.y, 'explosion'));
+                this.x = mx; this.y = my;
+                this.x = Math.max(this.radius, Math.min(this.game.w - this.radius, this.x));
+                this.y = Math.max(this.radius, Math.min(this.game.h - this.radius, this.y));
+                this.game.effects.push(new Effect(this.game, this.x, this.y, 'explosion'));
+                this.abilityCooldown = 120;
+            }
+
+            // Tier 15: Star Eater
+            if (this.tank.special === 'star_eater') {
+                this.game.shapes.forEach(s => {
+                    if (distance(this.x, this.y, s.x, s.y) < 2000) { s.hp -= 0.15; this.hp = Math.min(this.maxHp, this.hp + 0.05); }
+                });
+            }
+
+            // Tier 16: Supernova
+            if (this.tank.special === 'supernova' && this.hp < this.maxHp * 0.2 && this.abilityCooldown <= 0) {
+                this.game.effects.push(new Effect(this.game, this.x, this.y, 'supernova'));
+                this.game.shapes.forEach(s => s.hp = 0);
+                this.abilityCooldown = 900;
+            }
+
+            // Tier 17: Nebula Weaver
+            if (this.tank.special === 'nebula' && moving && Math.random() < 0.3) {
+                this.game.effects.push(new Effect(this.game, this.x, this.y, 'trail'));
+            }
+            
+            // Tier 18: Quasar
+            if (this.tank.special === 'quasar') {
+                this.quasarAngle += 0.015;
+                this.game.shapes.forEach(s => {
+                    let a = Math.atan2(s.y - this.y, s.x - this.x);
+                    let dist = distance(this.x, this.y, s.x, s.y);
+                    let pd1 = Math.abs(Math.sin(a - this.quasarAngle)) * dist;
+                    let pd2 = Math.abs(Math.sin(a - (this.quasarAngle + Math.PI))) * dist;
+                    if (pd1 < 30 || pd2 < 30) s.hp -= 2.5;
+                });
+            }
+
+            // Auto Turrets (Dreadnought, Auto-Gunner)
+            this.tank.autoTurrets.forEach((turret, i) => {
+                this.turretCooldowns[i]--;
+                let target = null, minDist = turret.range;
+                this.game.shapes.forEach(s => { let d = distance(this.x, this.y, s.x, s.y); if(d < minDist) { minDist = d; target = s; } });
+                if (target) {
+                    this.turretAngles[i] = Math.atan2(target.y - this.y, target.x - this.x);
+                    if (this.turretCooldowns[i] <= 0) {
+                        let sx = this.x + turret.x + Math.cos(this.turretAngles[i])*turret.l;
+                        let sy = this.y + turret.y + Math.sin(this.turretAngles[i])*turret.l;
+                        this.game.bullets.push(new Bullet(this.game, sx, sy, this.turretAngles[i], 'player', this.bulletSpeed, this.bulletDamage, 10, 5));
+                        this.turretCooldowns[i] = turret.rate;
+                    }
+                } else this.turretAngles[i] += 0.02;
+            });
+
+            // Shooting
+            if (this.fireCooldown > 0) this.fireCooldown--;
+            if (this.game.mouse.down && this.fireCooldown <= 0) {
+                if (this.tank.special === 'laser') {
+                    this.game.drawLaser = { x: this.x, y: this.y, a: this.angle, len: 4000 };
+                    this.game.shapes.forEach(s => {
+                        let a2 = Math.atan2(s.y - this.y, s.x - this.x);
+                        let pd = Math.abs(Math.sin(a2 - this.angle)) * distance(this.x, this.y, s.x, s.y);
+                        if (pd < 30) s.hp -= this.bulletDamage;
+                    });
+                } else if (this.tank.special === 'overseer') {
+                    // Tier 20: Cosmic Overseer Orbital Strike
+                    this.game.effects.push(new Effect(this.game, mx, my, 'orbital_strike'));
+                    this.fireCooldown = 30;
+                } else {
+                    this.tank.barrels.forEach(b => {
+                        setTimeout(() => {
+                            let bAng = this.angle + b.a + (Math.random()-0.5)*b.spread;
+                            let sx = this.x + Math.cos(this.angle)*b.x - Math.sin(this.angle)*b.y + Math.cos(bAng)*b.l;
+                            let sy = this.y + Math.sin(this.angle)*b.x + Math.cos(this.angle)*b.y + Math.sin(bAng)*b.l;
+                            let rad = 8 * (b.sizeMult || 1);
+                            let hp = (10 + this.statLevels.bulletDamage*3) * b.dmgMult;
+                            let spd = this.bulletSpeed * b.speedMult;
+                            this.game.bullets.push(new Bullet(this.game, sx, sy, bAng, 'player', spd, this.bulletDamage * b.dmgMult, hp, rad, b.type));
+                            if (b.recoil > 0 && this.tankClassId !== 'monolith') {
+                                this.x -= Math.cos(bAng) * b.recoil; this.y -= Math.sin(bAng) * b.recoil;
+                            }
+                        }, b.delay * 1000);
+                    });
+                }
+                this.fireCooldown = this.fireRate * (this.tank.barrels[0]?.reloadMult || 1);
+            }
+        }
+
+        draw(ctx) {
+            if (this.game.state !== 'PLAYING') return;
+            ctx.save();
+            ctx.translate(this.x, this.y);
+            
+            // Tier 13: Chrono Aura
+            if(this.tank.special === 'chrono') {
+                ctx.beginPath(); ctx.arc(0, 0, 800, 0, Math.PI*2);
+                ctx.fillStyle = 'rgba(0, 200, 255, 0.05)'; ctx.fill();
+                ctx.strokeStyle = 'rgba(0, 200, 255, 0.2)'; ctx.lineWidth = 2; ctx.stroke();
+            }
+
+            if (this.tank.special === 'overseer') {
+                // Tier 20 Visual Override
+                ctx.rotate(this.game.frame * 0.01);
+                ctx.beginPath(); ctx.arc(0, 0, 150, 0, Math.PI*2); ctx.fillStyle = '#0a0a0a'; ctx.fill();
+                ctx.strokeStyle = '#fff'; ctx.lineWidth = 5; ctx.stroke();
+                
+                ctx.beginPath(); ctx.moveTo(-120, 0); ctx.quadraticCurveTo(0, -100, 120, 0);
+                ctx.quadraticCurveTo(0, 100, -120, 0); ctx.fillStyle = 'white'; ctx.fill();
+                
+                ctx.beginPath(); ctx.arc(0, 0, 50, 0, Math.PI*2); ctx.fillStyle = '#e74c3c'; ctx.fill();
+                ctx.beginPath(); ctx.arc(0, 0, 20, 0, Math.PI*2); ctx.fillStyle = '#000'; ctx.fill();
+            } else {
+                ctx.save(); ctx.rotate(this.angle);
+                this.tank.barrels.forEach(b => {
+                    ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(b.a);
+                    ctx.fillStyle = '#999'; ctx.fillRect(0, -b.w/2, b.l, b.w);
+                    ctx.lineWidth = 3; ctx.strokeStyle = '#333'; ctx.strokeRect(0, -b.w/2, b.l, b.w);
+                    ctx.restore();
+                });
+                ctx.restore();
+
+                ctx.beginPath(); ctx.arc(0, 0, this.radius, 0, Math.PI*2);
+                ctx.fillStyle = this.color; ctx.fill(); ctx.lineWidth=3; ctx.strokeStyle='#333'; ctx.stroke();
+                
+                this.tank.autoTurrets.forEach((t, i) => {
+                    ctx.save(); ctx.translate(t.x, t.y); ctx.rotate(this.turretAngles[i] - this.angle);
+                    ctx.fillStyle = '#999'; ctx.fillRect(0, -t.w/2, t.l, t.w); ctx.strokeRect(0, -t.w/2, t.l, t.w);
+                    ctx.beginPath(); ctx.arc(0, 0, t.w, 0, Math.PI*2); ctx.fillStyle=this.color; ctx.fill(); ctx.stroke();
+                    ctx.restore();
+                });
+                
+                // Tier 18 Quasar Lasers
+                if(this.tank.special === 'quasar') {
+                    ctx.rotate(this.quasarAngle - this.angle); // Apply absolute rotation
+                    ctx.beginPath(); ctx.moveTo(-4000, 0); ctx.lineTo(4000, 0);
+                    ctx.strokeStyle = 'rgba(0, 255, 255, 0.6)'; ctx.lineWidth = 40; ctx.stroke();
+                    ctx.strokeStyle = '#fff'; ctx.lineWidth = 15; ctx.stroke();
+                }
+            }
+            
+            ctx.restore();
+            drawHealthBar(ctx, this.x, this.y + this.radius + 20, 60, 10, this.hp, this.maxHp, true);
+        }
+    }
+
+    class Game {
+        constructor(canvas) {
+            this.canvas = canvas; this.ctx = canvas.getContext('2d');
+            this.w = 5000; this.h = 5000; // Expanded Arena
+            this.camera = { x: 0, y: 0, scale: 1 };
+            this.keys = {}; this.mouse = { x: 0, y: 0, down: false, rightDown: false };
+            this.frame = 0;
+
+            this.state = 'PLAYING';
+            this.player = new Player(this);
+            
+            this.statLabels = [
+                {id: 'maxHealth', label: 'Max Health'}, {id: 'healthRegen', label: 'Health Regen'},
+                {id: 'bulletSpeed', label: 'Bullet Speed'}, {id: 'bulletDamage', label: 'Bullet Damage'},
+                {id: 'reloadSpeed', label: 'Reload Speed'}, {id: 'moveSpeed', label: 'Movement Speed'}
+            ];
+
+            this.initInput(); this.initUI(); this.resize();
+            window.addEventListener('resize', () => this.resize());
+            document.getElementById('restartBtn').addEventListener('click', () => this.resetGame());
+            
+            this.resetGame();
+        }
+
+        initUI() {
+            const panel = document.getElementById('upgradePanel'); panel.innerHTML = '';
+            this.statLabels.forEach((stat, i) => {
+                const btn = document.createElement('div'); btn.className = 'upgrade-btn'; btn.id = 'btn-' + stat.id;
+                btn.onclick = () => {
+                    if (this.player.skillPoints > 0 && this.player.statLevels[stat.id] < 8) {
+                        this.player.statLevels[stat.id]++; this.player.skillPoints--;
+                        if (stat.id === 'maxHealth') this.player.hp += 25;
+                        this.updateUI();
+                    }
+                };
+                let blks = ''; for(let j=0; j<8; j++) blks += `<div class="stat-block" id="block-${stat.id}-${j}"></div>`;
+                btn.innerHTML = `<div><span style="color:#f1c40f">[${i+1}]</span> ${stat.label}</div><div class="stat-blocks">${blks}</div>`;
+                panel.appendChild(btn);
+            });
+        }
+
+        updateUI() {
+            document.getElementById('xpBar').style.width = `${(this.player.xp/this.player.maxXp)*100}%`;
+            document.getElementById('levelText').innerText = `Lvl ${this.player.level} | ${this.player.tank.name}`;
+
+            this.statLabels.forEach(stat => {
+                const btn = document.getElementById('btn-' + stat.id);
+                btn.style.display = (this.player.skillPoints > 0 && this.player.statLevels[stat.id] < 8) ? 'flex' : 'none';
+                for(let i=0; i<8; i++) {
+                    let b = document.getElementById(`block-${stat.id}-${i}`);
+                    if (i < this.player.statLevels[stat.id]) b.classList.add('filled'); else b.classList.remove('filled');
+                }
+            });
+        }
+
+        showEvolutionMenu(options) {
+            const panel = document.getElementById('evolutionPanel');
+            const container = document.getElementById('evoButtons');
+            container.innerHTML = '';
+            options.forEach(optId => {
+                let btn = document.createElement('div'); btn.className = 'evo-btn';
+                btn.innerText = TANK_CLASSES[optId].name;
+                btn.onclick = () => { this.player.setTankClass(optId); panel.style.display = 'none'; this.updateUI(); };
+                container.appendChild(btn);
+            });
+            panel.style.display = 'flex';
+        }
+
+        resetGame() {
+            this.bullets = []; this.shapes = []; this.effects = [];
+            this.player.resetState();
+            for(let i=0; i<300; i++) this.shapes.push(new Shape(this, Math.random()*this.w, Math.random()*this.h, Math.random()>0.9?2:Math.random()>0.6?1:0));
+            document.getElementById('gameOverScreen').style.display = 'none';
+            document.getElementById('evolutionPanel').style.display = 'none';
+            this.state = 'PLAYING';
+        }
+        setGameOver() { this.state = 'GAMEOVER'; document.getElementById('gameOverScreen').style.display = 'block'; }
+        resize() { this.canvas.width = window.innerWidth; this.canvas.height = window.innerHeight; }
+
+        initInput() {
+            window.addEventListener('keydown', (e) => {
+                this.keys[e.code] = true;
+                if(e.key >= '1' && e.key <= '6') document.getElementById('btn-' + this.statLabels[e.key-1].id)?.click();
+            });
+            window.addEventListener('keyup', (e) => this.keys[e.code] = false);
+            window.addEventListener('mousemove', (e) => { this.mouse.x = e.clientX; this.mouse.y = e.clientY; });
+            window.addEventListener('mousedown', (e) => { 
+                if(e.button===0) this.mouse.down = true; 
+                if(e.button===2) this.mouse.rightDown = true;
+            });
+            window.addEventListener('mouseup', (e) => { 
+                if(e.button===0) this.mouse.down = false; 
+                if(e.button===2) this.mouse.rightDown = false;
+            });
+        }
+
+        update() {
+            this.frame++;
+            this.drawLaser = null; 
+            this.player.update();
+            this.effects.forEach(e => e.update());
+            this.bullets.forEach(b => b.update());
+            this.shapes.forEach(s => s.update());
+            
+            // Standard Collisions
+            for(let b of this.bullets) {
+                if(b.marked) continue;
+                for(let s of this.shapes) {
+                    if(s.marked) continue;
+                    if(distance(b.x, b.y, s.x, s.y) < b.radius + s.radius) {
+                        s.hp -= b.damage; b.hp -= s.damage;
+                        if(s.hp <= 0 && b.owner==='player') this.player.gainXp(s.xp);
+                    }
+                }
+            }
+
+            // Memory Management
+            this.shapes = this.shapes.filter(s => !s.marked);
+            while(this.shapes.length < 350) this.shapes.push(new Shape(this, Math.random()*this.w, Math.random()*this.h, Math.random()>0.92?2:Math.random()>0.7?1:0));
+            this.bullets = this.bullets.filter(b => !b.marked);
+            this.effects = this.effects.filter(e => !e.marked);
+
+            if (this.state === 'PLAYING') {
+                const targetScale = 1 / (this.player.tank.fov || 1);
+                this.camera.scale += (targetScale - this.camera.scale) * 0.05;
+                const tx = this.player.x - (this.canvas.width/2) / this.camera.scale;
+                const ty = this.player.y - (this.canvas.height/2) / this.camera.scale;
+                this.camera.x += (tx - this.camera.x) * 0.1;
+                this.camera.y += (ty - this.camera.y) * 0.1;
+            }
+        }
+
+        drawGrid(ctx) {
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)'; ctx.lineWidth = 1; const gs = 50;
+            let sx = Math.floor(this.camera.x/gs)*gs, sy = Math.floor(this.camera.y/gs)*gs;
+            let ex = sx + this.canvas.width/this.camera.scale + gs, ey = sy + this.canvas.height/this.camera.scale + gs;
+            ctx.beginPath();
+            for(let x=Math.max(0,sx); x<=Math.min(this.w,ex); x+=gs) { ctx.moveTo(x, Math.max(0,sy)); ctx.lineTo(x, Math.min(this.h,ey)); }
+            for(let y=Math.max(0,sy); y<=Math.min(this.h,ey); y+=gs) { ctx.moveTo(Math.max(0,sx), y); ctx.lineTo(Math.min(this.w,ex), y); }
+            ctx.stroke();
+        }
+
+        draw() {
+            this.ctx.fillStyle = '#0d0d1a'; this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height); // Deep space background
+            this.ctx.save();
+            this.ctx.scale(this.camera.scale, this.camera.scale);
+            this.ctx.translate(-this.camera.x, -this.camera.y);
+
+            this.drawGrid(this.ctx);
+
+            this.shapes.forEach(s => s.draw(this.ctx));
+            this.effects.forEach(e => e.draw(this.ctx));
+            this.bullets.forEach(b => b.draw(this.ctx));
+            
+            if(this.drawLaser) {
+                this.ctx.beginPath(); this.ctx.moveTo(this.drawLaser.x, this.drawLaser.y);
+                this.ctx.lineTo(this.drawLaser.x + Math.cos(this.drawLaser.a)*this.drawLaser.len, this.drawLaser.y + Math.sin(this.drawLaser.a)*this.drawLaser.len);
+                this.ctx.strokeStyle = 'rgba(255, 0, 0, 0.8)'; this.ctx.lineWidth = 25; this.ctx.stroke();
+                this.ctx.strokeStyle = '#fff'; this.ctx.lineWidth = 10; this.ctx.stroke();
+            }
+
+            this.player.draw(this.ctx);
+            
+            // Arena Bounds
+            this.ctx.strokeStyle = 'rgba(0, 178, 225, 0.5)'; this.ctx.lineWidth = 10; this.ctx.strokeRect(0, 0, this.w, this.h);
+            this.ctx.restore();
+        }
+
+        loop() { this.update(); this.draw(); requestAnimationFrame(() => this.loop()); }
+    }
+
+    window.onload = () => { const g = new Game(document.getElementById('gameCanvas')); g.loop(); };
+</script>
+</body>
+</html>
