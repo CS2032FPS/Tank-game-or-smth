@@ -3,13 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tank Arena Game</title>
+    <title>Tank Arena Game - Step 2</title>
     <style>
         body {
             margin: 0;
             padding: 0;
             overflow: hidden;
             background-color: #f0f0f0;
+            font-family: sans-serif;
         }
         canvas {
             display: block;
@@ -25,18 +26,43 @@
         const MAP_HEIGHT = 3000;
         const GRID_SIZE = 50;
 
-        // --- CLASSES ---
+        // --- UTILITIES ---
+        function drawHealthBar(ctx, x, y, hp, maxHp, yOffset) {
+            if (hp >= maxHp) return; // Hide if full health
+            const width = 40;
+            const height = 6;
+            const barX = x - width / 2;
+            const barY = y + yOffset;
 
+            ctx.fillStyle = '#555';
+            ctx.fillRect(barX, barY, width, height);
+            
+            const healthWidth = Math.max(0, width * (hp / maxHp));
+            ctx.fillStyle = '#85e37d'; // Green health
+            ctx.fillRect(barX, barY, healthWidth, height);
+            
+            ctx.strokeStyle = '#333';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(barX, barY, width, height);
+        }
+
+        // --- CLASSES ---
         class Bullet {
-            constructor(x, y, angle) {
+            constructor(x, y, angle, owner, color) {
                 this.x = x;
                 this.y = y;
-                this.speed = 8;
+                this.speed = 10;
                 this.vx = Math.cos(angle) * this.speed;
                 this.vy = Math.sin(angle) * this.speed;
                 this.radius = 8;
                 this.life = 100; // Lifespan (frames)
                 this.markedForDeletion = false;
+                
+                this.owner = owner; // 'player' or 'enemy'
+                this.color = color;
+                
+                this.hp = 10;
+                this.damage = 10; 
             }
 
             update() {
@@ -54,7 +80,7 @@
             draw(ctx) {
                 ctx.beginPath();
                 ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
-                ctx.fillStyle = '#f14e54';
+                ctx.fillStyle = this.color;
                 ctx.fill();
                 ctx.strokeStyle = '#555';
                 ctx.lineWidth = 2;
@@ -71,24 +97,32 @@
                 this.spin = (Math.random() - 0.5) * 0.02;
                 this.markedForDeletion = false;
                 
-                // Assign properties based on type
                 if (this.type === 'square') {
                     this.radius = 15;
                     this.color = '#ffe869';
                     this.sides = 4;
+                    this.maxHp = 10;
                 } else if (this.type === 'triangle') {
                     this.radius = 18;
                     this.color = '#fc7677';
                     this.sides = 3;
+                    this.maxHp = 30;
                 } else if (this.type === 'pentagon') {
                     this.radius = 25;
                     this.color = '#768dfc';
                     this.sides = 5;
+                    this.maxHp = 100;
                 }
+                
+                this.hp = this.maxHp;
             }
 
             update() {
                 this.angle += this.spin;
+                
+                // Boundaries (bounce)
+                this.x = Math.max(this.radius, Math.min(MAP_WIDTH - this.radius, this.x));
+                this.y = Math.max(this.radius, Math.min(MAP_HEIGHT - this.radius, this.y));
             }
 
             draw(ctx) {
@@ -113,6 +147,8 @@
                 ctx.stroke();
                 
                 ctx.restore();
+
+                drawHealthBar(ctx, this.x, this.y, this.hp, this.maxHp, -this.radius - 15);
             }
         }
 
@@ -127,7 +163,11 @@
                 this.barrelWidth = 18;
                 
                 this.shootCooldown = 0;
-                this.shootDelay = 15; // frames between shots
+                this.shootDelay = 15; 
+                
+                this.maxHp = 100;
+                this.hp = this.maxHp;
+                this.hpRegen = 0.05; // HP gained per frame
             }
 
             update(keys, mouseWorldPos, game) {
@@ -139,7 +179,6 @@
                 if (keys['KeyA']) dx -= 1;
                 if (keys['KeyD']) dx += 1;
 
-                // Normalize diagonal movement
                 if (dx !== 0 && dy !== 0) {
                     const length = Math.sqrt(dx * dx + dy * dy);
                     dx /= length;
@@ -149,7 +188,6 @@
                 this.x += dx * this.speed;
                 this.y += dy * this.speed;
 
-                // Clamp to arena bounds
                 this.x = Math.max(this.radius, Math.min(MAP_WIDTH - this.radius, this.x));
                 this.y = Math.max(this.radius, Math.min(MAP_HEIGHT - this.radius, this.y));
 
@@ -158,35 +196,37 @@
 
                 // Shooting
                 if (this.shootCooldown > 0) this.shootCooldown--;
-                if (game.isShooting && this.shootCooldown === 0) {
+                if (game.isShooting && this.shootCooldown <= 0) {
                     this.shoot(game);
                     this.shootCooldown = this.shootDelay;
+                }
+
+                // Regen
+                if (this.hp < this.maxHp) {
+                    this.hp = Math.min(this.maxHp, this.hp + this.hpRegen);
                 }
             }
 
             shoot(game) {
-                // Spawn bullet at the tip of the barrel
                 const tipX = this.x + Math.cos(this.angle) * this.barrelLength;
                 const tipY = this.y + Math.sin(this.angle) * this.barrelLength;
-                game.bullets.push(new Bullet(tipX, tipY, this.angle));
+                game.bullets.push(new Bullet(tipX, tipY, this.angle, 'player', '#00b2e1'));
             }
 
             draw(ctx) {
                 ctx.save();
                 ctx.translate(this.x, this.y);
 
-                // Draw Barrel (rotates independently to point at mouse)
+                // Barrel
                 ctx.rotate(this.angle);
                 ctx.fillStyle = '#999';
                 ctx.strokeStyle = '#555';
                 ctx.lineWidth = 3;
-                // Offset rect so it starts inside the player and extends outwards
                 ctx.fillRect(0, -this.barrelWidth / 2, this.barrelLength, this.barrelWidth);
                 ctx.strokeRect(0, -this.barrelWidth / 2, this.barrelLength, this.barrelWidth);
-                
-                ctx.rotate(-this.angle); // Un-rotate for the body
+                ctx.rotate(-this.angle); 
 
-                // Draw Body
+                // Body
                 ctx.beginPath();
                 ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
                 ctx.fillStyle = '#00b2e1';
@@ -196,6 +236,99 @@
                 ctx.stroke();
 
                 ctx.restore();
+
+                drawHealthBar(ctx, this.x, this.y, this.hp, this.maxHp, this.radius + 15);
+            }
+        }
+
+        class EnemyTank {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.radius = 20;
+                this.speed = 2.5;
+                this.angle = Math.random() * Math.PI * 2;
+                this.barrelLength = 35;
+                this.barrelWidth = 18;
+                
+                this.shootCooldown = 0;
+                this.shootDelay = 40; 
+                
+                this.maxHp = 100;
+                this.hp = this.maxHp;
+                
+                this.wanderTimer = 0;
+                this.markedForDeletion = false;
+            }
+
+            update(game) {
+                const player = game.player;
+                const dx = player.x - this.x;
+                const dy = player.y - this.y;
+                const distToPlayer = Math.sqrt(dx * dx + dy * dy);
+
+                let moveSpeed = this.speed;
+
+                if (distToPlayer < 700) {
+                    // Aggro Player
+                    this.angle = Math.atan2(dy, dx);
+                    
+                    // Stop approaching if too close
+                    if (distToPlayer < 300) {
+                        moveSpeed = 0;
+                    }
+
+                    // Shoot
+                    if (this.shootCooldown <= 0) {
+                        const tipX = this.x + Math.cos(this.angle) * this.barrelLength;
+                        const tipY = this.y + Math.sin(this.angle) * this.barrelLength;
+                        game.bullets.push(new Bullet(tipX, tipY, this.angle, 'enemy', '#f14e54'));
+                        this.shootCooldown = this.shootDelay;
+                    }
+                } else {
+                    // Wander Randomly
+                    this.wanderTimer--;
+                    if (this.wanderTimer <= 0) {
+                        this.angle = Math.random() * Math.PI * 2;
+                        this.wanderTimer = 60 + Math.random() * 120;
+                    }
+                }
+
+                if (this.shootCooldown > 0) this.shootCooldown--;
+
+                this.x += Math.cos(this.angle) * moveSpeed;
+                this.y += Math.sin(this.angle) * moveSpeed;
+
+                // Map Boundaries
+                this.x = Math.max(this.radius, Math.min(MAP_WIDTH - this.radius, this.x));
+                this.y = Math.max(this.radius, Math.min(MAP_HEIGHT - this.radius, this.y));
+            }
+
+            draw(ctx) {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+
+                // Barrel
+                ctx.rotate(this.angle);
+                ctx.fillStyle = '#999';
+                ctx.strokeStyle = '#555';
+                ctx.lineWidth = 3;
+                ctx.fillRect(0, -this.barrelWidth / 2, this.barrelLength, this.barrelWidth);
+                ctx.strokeRect(0, -this.barrelWidth / 2, this.barrelLength, this.barrelWidth);
+                ctx.rotate(-this.angle);
+
+                // Body
+                ctx.beginPath();
+                ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
+                ctx.fillStyle = '#f14e54'; // Red enemy
+                ctx.fill();
+                ctx.strokeStyle = '#555';
+                ctx.lineWidth = 3;
+                ctx.stroke();
+
+                ctx.restore();
+
+                drawHealthBar(ctx, this.x, this.y, this.hp, this.maxHp, -this.radius - 15);
             }
         }
 
@@ -209,20 +342,25 @@
                 this.mouseY = 0;
                 this.isShooting = false;
                 
-                this.player = new Player(MAP_WIDTH / 2, MAP_HEIGHT / 2);
-                this.bullets = [];
-                this.shapes = [];
-
                 this.camera = { x: 0, y: 0 };
+                this.state = 'PLAYING'; // 'PLAYING' or 'GAMEOVER'
 
+                this.setupInputs();
                 this.resize();
                 window.addEventListener('resize', () => this.resize());
                 
-                this.setupInputs();
-                this.spawnInitialShapes();
-
-                // Start game loop
+                this.reset();
                 requestAnimationFrame(() => this.loop());
+            }
+
+            reset() {
+                this.player = new Player(MAP_WIDTH / 2, MAP_HEIGHT / 2);
+                this.bullets = [];
+                this.shapes = [];
+                this.enemies = [];
+                this.state = 'PLAYING';
+                
+                this.spawnInitialEntities();
             }
 
             resize() {
@@ -240,20 +378,23 @@
                 });
                 
                 window.addEventListener('mousedown', e => {
-                    if(e.button === 0) this.isShooting = true;
+                    if (e.button === 0) {
+                        if (this.state === 'GAMEOVER') this.reset();
+                        else this.isShooting = true;
+                    }
                 });
                 window.addEventListener('mouseup', e => {
-                    if(e.button === 0) this.isShooting = false;
+                    if (e.button === 0) this.isShooting = false;
                 });
             }
 
-            spawnInitialShapes() {
+            spawnInitialEntities() {
                 const types = ['square', 'triangle', 'pentagon'];
                 for (let i = 0; i < 150; i++) {
-                    const x = Math.random() * MAP_WIDTH;
-                    const y = Math.random() * MAP_HEIGHT;
-                    const type = types[Math.floor(Math.random() * types.length)];
-                    this.shapes.push(new Shape(x, y, type));
+                    this.shapes.push(new Shape(Math.random() * MAP_WIDTH, Math.random() * MAP_HEIGHT, types[Math.floor(Math.random() * types.length)]));
+                }
+                for (let i = 0; i < 15; i++) {
+                    this.enemies.push(new EnemyTank(Math.random() * MAP_WIDTH, Math.random() * MAP_HEIGHT));
                 }
             }
 
@@ -264,56 +405,124 @@
                 };
             }
 
-            checkCollisions() {
-                // Basic Circle Collision Detection between Bullets and Shapes
-                for (let i = this.bullets.length - 1; i >= 0; i--) {
-                    const b = this.bullets[i];
-                    for (let j = this.shapes.length - 1; j >= 0; j--) {
-                        const s = this.shapes[j];
+            // Handles overlap resolution and body damage between two circular entities
+            handlePhysicalCollision(e1, e2, damageRatio) {
+                const dx = e1.x - e2.x;
+                const dy = e1.y - e2.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                const minDist = e1.radius + e2.radius;
+
+                if (dist < minDist) {
+                    // Deal body damage
+                    e1.hp -= damageRatio;
+                    e2.hp -= damageRatio;
+
+                    if (e1.hp <= 0) e1.markedForDeletion = true;
+                    if (e2.hp <= 0) e2.markedForDeletion = true;
+
+                    // Push apart to prevent getting stuck
+                    if (dist > 0) {
+                        const overlap = minDist - dist;
+                        const pushX = (dx / dist) * overlap * 0.5;
+                        const pushY = (dy / dist) * overlap * 0.5;
                         
-                        const dx = b.x - s.x;
-                        const dy = b.y - s.y;
-                        const dist = Math.sqrt(dx * dx + dy * dy);
-                        
-                        if (dist < b.radius + s.radius) {
-                            b.markedForDeletion = true;
-                            s.markedForDeletion = true; // One-hit destroy for now
-                            break; // Stop checking this bullet against other shapes
-                        }
+                        e1.x += pushX; e1.y += pushY;
+                        e2.x -= pushX; e2.y -= pushY;
                     }
                 }
             }
 
+            checkCollisions() {
+                // 1. Bullets vs Shapes, Player, and Enemies
+                for (let i = this.bullets.length - 1; i >= 0; i--) {
+                    const b = this.bullets[i];
+                    
+                    // vs Shapes
+                    for (let j = this.shapes.length - 1; j >= 0; j--) {
+                        const s = this.shapes[j];
+                        const dist = Math.hypot(b.x - s.x, b.y - s.y);
+                        if (dist < b.radius + s.radius) {
+                            let dmg = Math.min(b.hp, s.hp);
+                            s.hp -= b.damage;
+                            b.hp -= dmg;
+                            if (s.hp <= 0) s.markedForDeletion = true;
+                            if (b.hp <= 0) { b.markedForDeletion = true; break; }
+                        }
+                    }
+
+                    if (b.markedForDeletion) continue;
+
+                    // vs Player (if enemy bullet)
+                    if (b.owner === 'enemy') {
+                        const dist = Math.hypot(b.x - this.player.x, b.y - this.player.y);
+                        if (dist < b.radius + this.player.radius) {
+                            this.player.hp -= b.damage;
+                            b.markedForDeletion = true;
+                        }
+                    } 
+                    // vs Enemies (if player bullet)
+                    else if (b.owner === 'player') {
+                        for (let j = this.enemies.length - 1; j >= 0; j--) {
+                            const e = this.enemies[j];
+                            const dist = Math.hypot(b.x - e.x, b.y - e.y);
+                            if (dist < b.radius + e.radius) {
+                                e.hp -= b.damage;
+                                b.markedForDeletion = true;
+                                if (e.hp <= 0) e.markedForDeletion = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                // 2. Physical/Body Collisions
+                // Player vs Shapes
+                this.shapes.forEach(s => this.handlePhysicalCollision(this.player, s, 1));
+                
+                // Player vs Enemies
+                this.enemies.forEach(e => this.handlePhysicalCollision(this.player, e, 0.5));
+                
+                // Enemies vs Shapes
+                this.enemies.forEach(e => {
+                    this.shapes.forEach(s => this.handlePhysicalCollision(e, s, 0.5));
+                });
+            }
+
             update() {
-                // Update player
+                if (this.state === 'GAMEOVER') return;
+
                 this.player.update(this.keys, this.getMouseWorldPos(), this);
+
+                if (this.player.hp <= 0) {
+                    this.state = 'GAMEOVER';
+                }
 
                 // Update Camera to follow player
                 this.camera.x = this.player.x - this.canvas.width / 2;
                 this.camera.y = this.player.y - this.canvas.height / 2;
 
-                // Clamp camera to map boundaries
+                // Clamp camera
                 this.camera.x = Math.max(0, Math.min(MAP_WIDTH - this.canvas.width, this.camera.x));
                 this.camera.y = Math.max(0, Math.min(MAP_HEIGHT - this.canvas.height, this.camera.y));
 
-                // Update entities
                 this.bullets.forEach(b => b.update());
                 this.shapes.forEach(s => s.update());
+                this.enemies.forEach(e => e.update(this));
 
-                // Collisions
                 this.checkCollisions();
 
                 // Cleanup deleted entities
                 this.bullets = this.bullets.filter(b => !b.markedForDeletion);
                 this.shapes = this.shapes.filter(s => !s.markedForDeletion);
+                this.enemies = this.enemies.filter(e => !e.markedForDeletion);
 
-                // Respawn shapes if they run low
+                // Respawn
                 if (this.shapes.length < 100) {
                     const types = ['square', 'triangle', 'pentagon'];
-                    const x = Math.random() * MAP_WIDTH;
-                    const y = Math.random() * MAP_HEIGHT;
-                    const type = types[Math.floor(Math.random() * types.length)];
-                    this.shapes.push(new Shape(x, y, type));
+                    this.shapes.push(new Shape(Math.random() * MAP_WIDTH, Math.random() * MAP_HEIGHT, types[Math.floor(Math.random() * types.length)]));
+                }
+                if (this.enemies.length < 10) {
+                    this.enemies.push(new EnemyTank(Math.random() * MAP_WIDTH, Math.random() * MAP_HEIGHT));
                 }
             }
 
@@ -322,7 +531,6 @@
                 this.ctx.lineWidth = 1;
                 this.ctx.beginPath();
                 
-                // Calculate visible grid area
                 const startX = Math.floor(this.camera.x / GRID_SIZE) * GRID_SIZE;
                 const startY = Math.floor(this.camera.y / GRID_SIZE) * GRID_SIZE;
                 const endX = startX + this.canvas.width + GRID_SIZE;
@@ -336,14 +544,7 @@
                     this.ctx.moveTo(this.camera.x, y);
                     this.ctx.lineTo(this.camera.x + this.canvas.width, y);
                 }
-                
                 this.ctx.stroke();
-            }
-
-            drawBounds() {
-                this.ctx.strokeStyle = '#333';
-                this.ctx.lineWidth = 5;
-                this.ctx.strokeRect(0, 0, MAP_WIDTH, MAP_HEIGHT);
             }
 
             draw() {
@@ -352,19 +553,40 @@
                 this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
                 this.ctx.save();
-                // Apply Camera Translation
                 this.ctx.translate(-this.camera.x, -this.camera.y);
 
-                // Draw Environment
                 this.drawGrid();
-                this.drawBounds();
+                
+                // Draw Arena Bounds
+                this.ctx.strokeStyle = '#333';
+                this.ctx.lineWidth = 5;
+                this.ctx.strokeRect(0, 0, MAP_WIDTH, MAP_HEIGHT);
 
                 // Draw Entities
                 this.shapes.forEach(s => s.draw(this.ctx));
+                this.enemies.forEach(e => e.draw(this.ctx));
                 this.bullets.forEach(b => b.draw(this.ctx));
-                this.player.draw(this.ctx);
+                
+                if (this.state === 'PLAYING') {
+                    this.player.draw(this.ctx);
+                }
 
                 this.ctx.restore();
+
+                // UI Overlay
+                if (this.state === 'GAMEOVER') {
+                    this.ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+                    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                    
+                    this.ctx.fillStyle = '#fff';
+                    this.ctx.textAlign = 'center';
+                    
+                    this.ctx.font = 'bold 60px sans-serif';
+                    this.ctx.fillText('GAME OVER', this.canvas.width / 2, this.canvas.height / 2 - 20);
+                    
+                    this.ctx.font = '24px sans-serif';
+                    this.ctx.fillText('Click anywhere to restart', this.canvas.width / 2, this.canvas.height / 2 + 30);
+                }
             }
 
             loop() {
@@ -374,7 +596,6 @@
             }
         }
 
-        // Start the game when the window loads
         window.onload = () => {
             new Game();
         };
