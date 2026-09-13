@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cosmic Arena - Developer Build</title>
+    <title>tank game or smth</title></title>
     <style>
         body { margin: 0; padding: 0; overflow: hidden; background-color: #0b0b1a; font-family: sans-serif; user-select: none; color: white;}
         canvas { display: block; }
@@ -13,12 +13,17 @@
         #admin-ui { position: absolute; top: 15px; right: 15px; pointer-events: auto; display: none; }
         #admin-ui select { padding: 8px; font-size: 16px; font-weight: bold; background: #1a1a2e; color: #6abcf1; border: 2px solid #6abcf1; border-radius: 5px; outline: none; cursor: pointer; }
         #admin-ui select:hover { background: #2a2a4e; }
+
+        /* Fullscreen UI */
+        #fullscreen-btn { position: absolute; top: 15px; left: 15px; padding: 8px 12px; font-size: 14px; font-weight: bold; background: #1a1a2e; color: #6abcf1; border: 2px solid #6abcf1; border-radius: 5px; outline: none; cursor: pointer; pointer-events: auto; }
+        #fullscreen-btn:hover { background: #2a2a4e; }
     </style>
 </head>
 <body>
     <canvas id="gameCanvas"></canvas>
     
     <div id="ui-layer">
+        <button id="fullscreen-btn">Fullscreen</button>
         <div id="admin-ui">
             <!-- Populated via JS when Admin Mode is activated -->
         </div>
@@ -531,6 +536,15 @@
             resize() { this.canvas.width = window.innerWidth; this.canvas.height = window.innerHeight; }
 
             setupInputs() {
+                // Fullscreen toggler
+                document.getElementById('fullscreen-btn').addEventListener('click', () => {
+                    if (!document.fullscreenElement) {
+                        document.documentElement.requestFullscreen().catch(err => console.log(`Error: ${err.message}`));
+                    } else {
+                        if (document.exitFullscreen) document.exitFullscreen();
+                    }
+                });
+
                 window.addEventListener('keydown', e => {
                     this.keys[e.code] = true;
                     if (this.state === 'PLAYING' && this.player.skillPoints > 0 && e.key >= '1' && e.key <= '6') this.player.upgradeStat(parseInt(e.key)-1);
@@ -547,8 +561,8 @@
                 window.addEventListener('keyup', e => this.keys[e.code] = false);
                 window.addEventListener('mousemove', e => { this.mouseX = e.clientX; this.mouseY = e.clientY; });
                 window.addEventListener('mousedown', e => {
-                    // Prevent shooting if clicking on the HTML select dropdown
-                    if (e.target.tagName === 'SELECT' || e.target.tagName === 'OPTION') return;
+                    // Prevent shooting if clicking on the HTML select dropdown or fullscreen button
+                    if (e.target.tagName === 'SELECT' || e.target.tagName === 'OPTION' || e.target.id === 'fullscreen-btn') return;
 
                     if (e.button === 0) {
                         if (this.state === 'GAMEOVER') this.reset();
