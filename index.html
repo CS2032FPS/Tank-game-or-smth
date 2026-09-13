@@ -3,182 +3,205 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tank Arena Game - Step 3</title>
+    <title>Tank Arena Game - Step 4</title>
     <style>
-        body {
-            margin: 0;
-            padding: 0;
-            overflow: hidden;
-            background-color: #f0f0f0;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            user-select: none;
-        }
-        canvas {
-            display: block;
-        }
+        body { margin: 0; padding: 0; overflow: hidden; background-color: #f0f0f0; font-family: sans-serif; user-select: none; }
+        canvas { display: block; }
     </style>
 </head>
 <body>
     <canvas id="gameCanvas"></canvas>
 
     <script>
-        // --- CONSTANTS ---
-        const MAP_WIDTH = 3000;
-        const MAP_HEIGHT = 3000;
+        // --- CONSTANTS & CONFIG ---
+        const MAP_WIDTH = 8000;
+        const MAP_HEIGHT = 8000;
         const GRID_SIZE = 50;
 
-        const STAT_NAMES = [
-            'Health Regen', 'Max Health', 'Bullet Speed', 
-            'Bullet Damage', 'Reload', 'Movement Speed'
-        ];
-        const STAT_COLORS = [
-            '#e2ab69', '#e67ebf', '#6abcf1', 
-            '#f14e54', '#85e37d', '#768dfc'
-        ];
+        // Upgrade Levels: T1->T2(15), T2->T3(30), etc.
+        const EVOLUTION_LEVELS = [0, 15, 30, 45, 60, 75, 90, 105, 120, 135];
+        
+        const STAT_NAMES = ['Health Regen', 'Max Health', 'Bullet Speed', 'Bullet Damage', 'Reload', 'Movement Speed'];
+        const STAT_COLORS = ['#e2ab69', '#e67ebf', '#6abcf1', '#f14e54', '#85e37d', '#768dfc'];
+
+        // Helper to generate symmetric barrels
+        const makeBarrels = (count, l, w, offset = 0) => Array.from({length: count}, (_, i) => ({l, w, a: (360/count)*i + offset}));
+
+        // b: barrels [ {l:length, w:width, x, y, a:angle(deg), r:reloadMult, d:dmgMult, s:spdMult, spr:spread, type, rec:recoil} ]
+        const TANK_CLASSES = {
+            'Base': { tier: 1, b: [{l:35, w:18}] },
+            // Tier 2
+            'Twin': { tier: 2, b: [{l:35, w:18, y:-10}, {l:35, w:18, y:10}] },
+            'Sniper': { tier: 2, fov: 1.25, b: [{l:45, w:18, r:1.5, d:1.5, s:1.5}] },
+            'Machine Gun': { tier: 2, b: [{l:35, w:22, spr:0.3, r:0.5}] },
+            // Tier 3
+            'Quad': { tier: 3, b: makeBarrels(4, 35, 18) },
+            'Assassin': { tier: 3, fov: 1.5, b: [{l:50, w:18, r:2, d:2, s:2}] },
+            'Destroyer': { tier: 3, b: [{l:30, w:30, r:3, d:4, s:0.8, type:'heavy', rec:15}] },
+            // Tier 4
+            'Octo': { tier: 4, b: makeBarrels(8, 35, 18) },
+            'Ranger': { tier: 4, fov: 1.8, b: [{l:55, w:18, r:2.5, d:3, s:2.5}] },
+            'Annihilator': { tier: 4, b: [{l:30, w:40, r:3.5, d:6, s:0.8, type:'heavy', rec:25}] },
+            // Tier 5
+            'Pentashot': { tier: 5, b: [{l:35,w:16},{l:30,w:16,a:20},{l:30,w:16,a:-20},{l:25,w:16,a:40},{l:25,w:16,a:-40}] },
+            'Stalker': { tier: 5, invis: true, fov: 1.5, b: [{l:50, w:18, r:2, d:2, s:2}] },
+            'Skimmer': { tier: 5, b: [{l:35, w:20, type:'skimmer', r:2}] },
+            // Tier 6
+            'Fighter': { tier: 6, b: [{l:35,w:18},{l:25,w:16,a:90},{l:25,w:16,a:-90},{l:25,w:16,a:150,rec:5},{l:25,w:16,a:-150,rec:5}] },
+            'Overlord': { tier: 6, b: [{l:25, w:30, type:'drone', max: 8}], fov: 1.2 },
+            'Necromancer': { tier: 6, b: [{l:25, w:30, type:'square_drone', max: 15}] },
+            // Tier 7
+            'Battleship': { tier: 7, b: [{l:20, w:10, a:90, type:'micro', r:0.2}, {l:20, w:10, a:-90, type:'micro', r:0.2}] },
+            'Factory': { tier: 7, b: [{l:25, w:30, type:'minion', r:3, max: 4}] },
+            'Auto-Gunner': { tier: 7, autoTurrets: 1, b: [{l:35,w:15,y:-5},{l:35,w:15,y:5},{l:35,w:15,y:0,a:180}] },
+            // Tier 8
+            'Artillery': { tier: 8, b: [{l:40, w:20, type:'artillery', r:2, d:2}] },
+            'Laser Cannon': { tier: 8, b: [{l:35, w:15, type:'laser', r:0.1, d:0.2}] }, // Raycast emulation via extremely fast piercing bullets
+            'Tesla Coil': { tier: 8, tesla: true, b: [] },
+            // Tier 9
+            'Plasma Emitter': { tier: 9, b: [{l:35, w:25, type:'plasma', s:0.5, d:0.5, r:0.5}] },
+            'Railgun': { tier: 9, fov: 1.6, b: [{l:60, w:12, type:'railgun', r:5, d:10, s:4, rec:20}] },
+            'Orbiting Swarm': { tier: 9, swarm: true, b: [{l:35, w:18}] },
+            // Tier 10
+            'Mothership': { tier: 10, fov: 1.5, maxHpMult: 3, b: [{l:25, w:30, type:'drone', max: 30}] },
+            'Dreadnought': { tier: 10, autoTurrets: 6, maxHpMult: 5, b: [{l:40, w:25, type:'heavy'}] }
+        };
+
+        const getTierClasses = (tier) => Object.keys(TANK_CLASSES).filter(k => TANK_CLASSES[k].tier === tier);
 
         // --- UTILITIES ---
         function drawHealthBar(ctx, x, y, hp, maxHp, yOffset) {
-            if (hp >= maxHp) return;
-            const width = 40;
-            const height = 6;
-            const barX = x - width / 2;
-            const barY = y + yOffset;
-
-            ctx.fillStyle = '#555';
-            ctx.fillRect(barX, barY, width, height);
-            
-            const healthWidth = Math.max(0, width * (hp / maxHp));
-            ctx.fillStyle = '#85e37d';
-            ctx.fillRect(barX, barY, healthWidth, height);
-            
-            ctx.strokeStyle = '#333';
-            ctx.lineWidth = 1;
-            ctx.strokeRect(barX, barY, width, height);
+            if (hp >= maxHp || hp <= 0) return;
+            const w = 40, h = 6, bx = x - w/2, by = y + yOffset;
+            ctx.fillStyle = '#555'; ctx.fillRect(bx, by, w, h);
+            ctx.fillStyle = '#85e37d'; ctx.fillRect(bx, by, Math.max(0, w * (hp / maxHp)), h);
+            ctx.strokeStyle = '#333'; ctx.lineWidth = 1; ctx.strokeRect(bx, by, w, h);
         }
 
-        // --- CLASSES ---
+        // --- ENTITIES ---
         class Bullet {
-            constructor(x, y, angle, owner) {
-                this.x = x;
-                this.y = y;
-                this.owner = owner;
-                
-                // Inherit stats from owner
-                this.speed = owner.bSpeed || 10;
-                this.damage = owner.bDamage || 10;
-                
-                this.vx = Math.cos(angle) * this.speed;
-                this.vy = Math.sin(angle) * this.speed;
-                this.radius = 8;
-                this.life = 100;
+            constructor(x, y, angle, owner, config) {
+                this.x = x; this.y = y; this.owner = owner; this.team = owner.team; this.color = owner.color;
+                this.type = config.type || 'basic';
+                this.speed = (owner.bSpeed || 10) * (config.s || 1);
+                this.damage = (owner.bDamage || 10) * (config.d || 1);
+                this.vx = Math.cos(angle) * this.speed; this.vy = Math.sin(angle) * this.speed;
+                this.radius = this.type === 'heavy' ? 16 : this.type === 'micro' ? 4 : 8;
+                this.life = this.type === 'plasma' ? 300 : this.type === 'laser' ? 5 : 100;
+                this.hp = this.type === 'plasma' || this.type === 'railgun' ? 9999 : this.damage; // Piercing
                 this.markedForDeletion = false;
+                this.angle = angle;
                 
-                this.team = owner.team;
-                this.color = owner.color;
-                this.hp = this.damage; 
+                if (this.type.includes('drone') || this.type === 'minion') {
+                    this.life = 9999;
+                    this.hp = this.damage * 3; // Drones have body health
+                }
             }
 
-            update() {
-                this.x += this.vx;
-                this.y += this.vy;
+            update(game) {
+                if (this.type.includes('drone') || this.type === 'minion') {
+                    // Drone AI (Seek mouse if player, seek enemy if AI)
+                    let target = null;
+                    if (this.owner instanceof Player) target = game.getMouseWorldPos();
+                    else if (this.owner.target) target = {x: this.owner.target.x, y: this.owner.target.y};
+
+                    if (target) {
+                        const dx = target.x - this.x;
+                        const dy = target.y - this.y;
+                        const desiredAngle = Math.atan2(dy, dx);
+                        this.vx += Math.cos(desiredAngle) * 0.5;
+                        this.vy += Math.sin(desiredAngle) * 0.5;
+                    }
+                    // Friction
+                    this.vx *= 0.95; this.vy *= 0.95;
+                    
+                    if(this.owner.markedForDeletion) this.hp -= 0.5; // Die if owner dies
+                }
+
+                if (this.type === 'skimmer' && this.life % 10 === 0) {
+                    game.bullets.push(new Bullet(this.x, this.y, this.angle + (this.life*0.2), this.owner, {type:'basic', s:0.5, d:0.5}));
+                }
+
+                this.x += this.vx; this.y += this.vy;
                 this.life--;
 
                 if (this.life <= 0 || this.x < 0 || this.x > MAP_WIDTH || this.y < 0 || this.y > MAP_HEIGHT) {
+                    if (this.type === 'artillery') {
+                        for(let i=0; i<6; i++) game.bullets.push(new Bullet(this.x, this.y, (Math.PI*2/6)*i, this.owner, {type:'basic', s:0.5, d:0.5}));
+                    }
                     this.markedForDeletion = true;
                 }
             }
 
             draw(ctx) {
                 ctx.beginPath();
-                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
-                ctx.fillStyle = this.color;
-                ctx.fill();
-                ctx.strokeStyle = '#555';
-                ctx.lineWidth = 2;
-                ctx.stroke();
+                if(this.type === 'square_drone' || this.type === 'minion') {
+                    ctx.rect(this.x - this.radius, this.y - this.radius, this.radius*2, this.radius*2);
+                } else if (this.type === 'laser' || this.type === 'railgun') {
+                    ctx.moveTo(this.x, this.y);
+                    ctx.lineTo(this.x - this.vx*2, this.y - this.vy*2);
+                    ctx.lineWidth = this.type === 'railgun' ? 8 : 3;
+                    ctx.strokeStyle = this.color; ctx.stroke(); return;
+                } else {
+                    ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                }
+                ctx.fillStyle = this.color; ctx.fill();
+                ctx.strokeStyle = '#555'; ctx.lineWidth = 2; ctx.stroke();
             }
         }
 
         class Shape {
             constructor(x, y, type) {
-                this.x = x;
-                this.y = y;
-                this.type = type; 
+                this.x = x; this.y = y; this.type = type; 
                 this.angle = Math.random() * Math.PI * 2;
                 this.spin = (Math.random() - 0.5) * 0.02;
-                this.markedForDeletion = false;
-                this.team = 'neutral';
+                this.markedForDeletion = false; this.team = 'neutral';
                 
-                if (this.type === 'square') {
-                    this.radius = 15; this.color = '#ffe869'; this.sides = 4;
-                    this.maxHp = 10; this.xpValue = 10;
-                } else if (this.type === 'triangle') {
-                    this.radius = 18; this.color = '#fc7677'; this.sides = 3;
-                    this.maxHp = 30; this.xpValue = 25;
-                } else if (this.type === 'pentagon') {
-                    this.radius = 25; this.color = '#768dfc'; this.sides = 5;
-                    this.maxHp = 100; this.xpValue = 130;
-                }
+                if (this.type === 'square') { this.radius = 15; this.color = '#ffe869'; this.sides = 4; this.maxHp = 10; this.xpValue = 10; }
+                else if (this.type === 'triangle') { this.radius = 18; this.color = '#fc7677'; this.sides = 3; this.maxHp = 30; this.xpValue = 25; }
+                else if (this.type === 'pentagon') { this.radius = 25; this.color = '#768dfc'; this.sides = 5; this.maxHp = 100; this.xpValue = 130; }
                 this.hp = this.maxHp;
             }
-
             update() {
                 this.angle += this.spin;
                 this.x = Math.max(this.radius, Math.min(MAP_WIDTH - this.radius, this.x));
                 this.y = Math.max(this.radius, Math.min(MAP_HEIGHT - this.radius, this.y));
             }
-
             draw(ctx) {
-                ctx.save();
-                ctx.translate(this.x, this.y);
-                ctx.rotate(this.angle);
-                
+                ctx.save(); ctx.translate(this.x, this.y); ctx.rotate(this.angle);
                 ctx.beginPath();
                 for (let i = 0; i < this.sides; i++) {
-                    const angle = (i * 2 * Math.PI) / this.sides;
-                    ctx[i === 0 ? 'moveTo' : 'lineTo'](Math.cos(angle) * this.radius, Math.sin(angle) * this.radius);
+                    const a = (i * 2 * Math.PI) / this.sides;
+                    ctx[i === 0 ? 'moveTo' : 'lineTo'](Math.cos(a) * this.radius, Math.sin(a) * this.radius);
                 }
                 ctx.closePath();
-                
-                ctx.fillStyle = this.color;
-                ctx.fill();
-                ctx.strokeStyle = '#555';
-                ctx.lineWidth = 3;
-                ctx.stroke();
+                ctx.fillStyle = this.color; ctx.fill();
+                ctx.strokeStyle = '#555'; ctx.lineWidth = 3; ctx.stroke();
                 ctx.restore();
-
                 drawHealthBar(ctx, this.x, this.y, this.hp, this.maxHp, -this.radius - 15);
             }
         }
 
         class Tank {
             constructor(x, y, team) {
-                this.x = x;
-                this.y = y;
-                this.team = team;
-                this.color = team === 'blue' ? '#00b2e1' : '#f14e54';
-                this.radius = 20;
-                this.angle = 0;
-                this.barrelLength = 35;
-                this.barrelWidth = 18;
-                
-                this.shootCooldown = 0;
+                this.x = x; this.y = y; this.team = team; this.color = team === 'blue' ? '#00b2e1' : '#f14e54';
+                this.radius = 20; this.angle = 0;
                 this.markedForDeletion = false;
+                
+                this.classType = 'Base';
+                this.cooldowns = [];
+                this.alpha = 1; // For Stalker
+                this.orbitAngle = 0; // For Orbiting Swarm
 
-                // Leveling & Stats
-                this.level = 1;
-                this.xp = 0;
-                this.nextLevelXp = 50;
-                this.skillPoints = 0;
-                this.statLevels = [0, 0, 0, 0, 0, 0]; // Regen, MaxHP, B.Speed, B.Dmg, Reload, M.Speed
+                this.level = 1; this.xp = 0; this.nextLevelXp = 50; this.skillPoints = 0;
+                this.statLevels = [0, 0, 0, 0, 0, 0]; 
                 this.maxStatLevel = 7;
-
                 this.hp = this.maxHp;
             }
 
-            // Stat Getters dynamically calculate based on upgrade levels
+            get config() { return TANK_CLASSES[this.classType]; }
             get hpRegen() { return 0.02 + (this.statLevels[0] * 0.02); }
-            get maxHp() { return 100 + (this.statLevels[1] * 20); }
+            get maxHp() { return (100 + (this.statLevels[1] * 20)) * (this.config.maxHpMult || 1); }
             get bSpeed() { return 8 + (this.statLevels[2] * 1.5); }
             get bDamage() { return 10 + (this.statLevels[3] * 4); }
             get reloadTime() { return Math.max(5, 30 - (this.statLevels[4] * 3)); }
@@ -187,441 +210,416 @@
             addXp(amount) {
                 this.xp += amount;
                 while (this.xp >= this.nextLevelXp) {
-                    this.xp -= this.nextLevelXp;
-                    this.level++;
-                    this.skillPoints++;
+                    this.xp -= this.nextLevelXp; this.level++; this.skillPoints++;
                     this.nextLevelXp = Math.floor(this.nextLevelXp * 1.2);
-                    this.hp = this.maxHp; // Heal on level up
+                    this.hp = this.maxHp;
+                }
+            }
+
+            evolve(newClass) {
+                if (TANK_CLASSES[newClass]) {
+                    this.classType = newClass;
+                    this.cooldowns = new Array(this.config.b.length).fill(0);
+                    this.hp = this.maxHp;
                 }
             }
 
             upgradeStat(index) {
                 if (this.skillPoints > 0 && this.statLevels[index] < this.maxStatLevel) {
-                    this.statLevels[index]++;
-                    this.skillPoints--;
-                    if (index === 1) this.hp += 20; // instantly give the new HP capacity
+                    this.statLevels[index]++; this.skillPoints--;
+                    if (index === 1) this.hp += 20 * (this.config.maxHpMult || 1); 
                 }
             }
 
             shoot(game) {
-                if (this.shootCooldown <= 0) {
-                    const tipX = this.x + Math.cos(this.angle) * this.barrelLength;
-                    const tipY = this.y + Math.sin(this.angle) * this.barrelLength;
-                    game.bullets.push(new Bullet(tipX, tipY, this.angle, this));
-                    this.shootCooldown = this.reloadTime;
+                const barrels = this.config.b;
+                barrels.forEach((b, i) => {
+                    if (this.cooldowns[i] > 0) return;
+                    
+                    const bAngle = this.angle + (b.a ? b.a * Math.PI/180 : 0);
+                    const spread = b.spr ? (Math.random() - 0.5) * b.spr : 0;
+                    const finalAngle = bAngle + spread;
+                    
+                    // Drone Cap check
+                    if (b.type === 'drone' || b.type === 'minion' || b.type === 'square_drone') {
+                        const activeDrones = game.bullets.filter(bullet => bullet.owner === this && bullet.type === b.type).length;
+                        if (activeDrones >= (b.max || 8)) return;
+                    }
+
+                    // Calculate tip of barrel considering offsets
+                    const cx = this.x + Math.cos(this.angle + Math.PI/2) * (b.y || 0) + Math.cos(this.angle) * (b.x || 0);
+                    const cy = this.y + Math.sin(this.angle + Math.PI/2) * (b.y || 0) + Math.sin(this.angle) * (b.x || 0);
+                    const tipX = cx + Math.cos(bAngle) * (b.l || 35);
+                    const tipY = cy + Math.sin(bAngle) * (b.l || 35);
+
+                    game.bullets.push(new Bullet(tipX, tipY, finalAngle, this, b));
+                    this.cooldowns[i] = this.reloadTime * (b.r || 1);
+
+                    // Recoil
+                    if (b.rec) {
+                        this.x -= Math.cos(bAngle) * b.rec;
+                        this.y -= Math.sin(bAngle) * b.rec;
+                    }
+                });
+            }
+
+            updateTank(game, isMoving) {
+                for(let i=0; i<this.cooldowns.length; i++) if (this.cooldowns[i] > 0) this.cooldowns[i]--;
+                
+                if (this.hp < this.maxHp) this.hp = Math.min(this.maxHp, this.hp + this.hpRegen);
+
+                // Special Mechanics
+                if (this.config.invis) {
+                    this.alpha = isMoving ? 1 : Math.max(0.1, this.alpha - 0.02);
+                } else this.alpha = 1;
+
+                if (this.config.tesla && game.ticks % 30 === 0) {
+                    [...game.enemies, ...game.shapes, game.player].forEach(e => {
+                        if (e && e.team !== this.team && !e.markedForDeletion && Math.hypot(e.x - this.x, e.y - this.y) < 200) {
+                            e.hp -= this.bDamage;
+                            // Add lightning visual cue (simple flash)
+                            game.ctx.beginPath(); game.ctx.moveTo(this.x, this.y); game.ctx.lineTo(e.x, e.y);
+                            game.ctx.strokeStyle = '#6abcf1'; game.ctx.lineWidth = 2; game.ctx.stroke();
+                        }
+                    });
+                }
+                
+                if (this.config.swarm) {
+                    this.orbitAngle += 0.05;
+                    // Emulate swarm by drawing and damaging nearby
+                    [...game.enemies, ...game.shapes, game.player].forEach(e => {
+                        if (e && e.team !== this.team && Math.hypot(e.x - this.x, e.y - this.y) < 80) e.hp -= 0.5;
+                    });
+                }
+                
+                if (this.config.autoTurrets && game.ticks % 20 === 0) {
+                    // Find closest enemy, shoot generic bullet
+                    let closest = null, dist = 400;
+                    [...game.enemies, ...game.shapes, game.player].forEach(e => {
+                        if(e && e.team !== this.team) {
+                            let d = Math.hypot(e.x - this.x, e.y - this.y);
+                            if(d < dist) { dist = d; closest = e; }
+                        }
+                    });
+                    if (closest) {
+                        const a = Math.atan2(closest.y - this.y, closest.x - this.x);
+                        game.bullets.push(new Bullet(this.x, this.y, a, this, {type:'basic', s:1, d:0.5}));
+                    }
                 }
             }
 
             draw(ctx) {
-                ctx.save();
-                ctx.translate(this.x, this.y);
+                ctx.save(); ctx.translate(this.x, this.y);
+                ctx.globalAlpha = this.alpha;
+                
+                // Draw Barrels
+                this.config.b.forEach(b => {
+                    ctx.save();
+                    const bAngle = (b.a || 0) * Math.PI/180;
+                    ctx.rotate(this.angle);
+                    ctx.translate(b.x || 0, b.y || 0); // Offset
+                    ctx.rotate(bAngle); // Independent rotation
+                    ctx.fillStyle = '#999'; ctx.strokeStyle = '#555'; ctx.lineWidth = 3;
+                    ctx.fillRect(0, -(b.w || 18) / 2, (b.l || 35), (b.w || 18));
+                    ctx.strokeRect(0, -(b.w || 18) / 2, (b.l || 35), (b.w || 18));
+                    ctx.restore();
+                });
 
-                // Barrel
-                ctx.rotate(this.angle);
-                ctx.fillStyle = '#999';
-                ctx.strokeStyle = '#555';
-                ctx.lineWidth = 3;
-                ctx.fillRect(0, -this.barrelWidth / 2, this.barrelLength, this.barrelWidth);
-                ctx.strokeRect(0, -this.barrelWidth / 2, this.barrelLength, this.barrelWidth);
-                ctx.rotate(-this.angle); 
+                // Draw Swarm
+                if (this.config.swarm) {
+                    for(let i=0; i<3; i++) {
+                        const sx = Math.cos(this.orbitAngle + (i*Math.PI*2/3)) * 60;
+                        const sy = Math.sin(this.orbitAngle + (i*Math.PI*2/3)) * 60;
+                        ctx.beginPath(); ctx.arc(sx, sy, 8, 0, Math.PI*2);
+                        ctx.fillStyle = this.color; ctx.fill(); ctx.stroke();
+                    }
+                }
 
                 // Body
                 ctx.beginPath();
-                ctx.arc(0, 0, this.radius, 0, Math.PI * 2);
-                ctx.fillStyle = this.color;
-                ctx.fill();
-                ctx.strokeStyle = '#555';
-                ctx.lineWidth = 3;
-                ctx.stroke();
+                ctx.arc(0, 0, this.radius * (this.config.maxHpMult ? 1.5 : 1), 0, Math.PI * 2);
+                ctx.fillStyle = this.color; ctx.fill();
+                ctx.strokeStyle = '#555'; ctx.lineWidth = 3; ctx.stroke();
+                
+                // Auto Turret Visuals
+                if (this.config.autoTurrets) {
+                    ctx.beginPath(); ctx.arc(0,0, 10, 0, Math.PI*2);
+                    ctx.fillStyle = '#999'; ctx.fill(); ctx.stroke();
+                }
 
                 ctx.restore();
-                drawHealthBar(ctx, this.x, this.y, this.hp, this.maxHp, this.radius + 15);
+                if(this.alpha > 0.5) drawHealthBar(ctx, this.x, this.y, this.hp, this.maxHp, this.radius * 1.5 + 10);
             }
         }
 
         class Player extends Tank {
-            constructor(x, y) {
-                super(x, y, 'blue');
-            }
-
+            constructor(x, y) { super(x, y, 'blue'); }
             update(keys, mouseWorldPos, game) {
                 let dx = 0, dy = 0;
-                if (keys['KeyW']) dy -= 1;
-                if (keys['KeyS']) dy += 1;
-                if (keys['KeyA']) dx -= 1;
-                if (keys['KeyD']) dx += 1;
+                if (keys['KeyW']) dy -= 1; if (keys['KeyS']) dy += 1;
+                if (keys['KeyA']) dx -= 1; if (keys['KeyD']) dx += 1;
+                if (dx !== 0 && dy !== 0) { const l = Math.hypot(dx, dy); dx /= l; dy /= l; }
 
-                if (dx !== 0 && dy !== 0) {
-                    const length = Math.hypot(dx, dy);
-                    dx /= length; dy /= length;
-                }
-
-                this.x += dx * this.moveSpeed;
-                this.y += dy * this.moveSpeed;
-
+                this.x += dx * this.moveSpeed; this.y += dy * this.moveSpeed;
                 this.x = Math.max(this.radius, Math.min(MAP_WIDTH - this.radius, this.x));
                 this.y = Math.max(this.radius, Math.min(MAP_HEIGHT - this.radius, this.y));
 
                 this.angle = Math.atan2(mouseWorldPos.y - this.y, mouseWorldPos.x - this.x);
 
-                if (this.shootCooldown > 0) this.shootCooldown--;
+                this.updateTank(game, dx !== 0 || dy !== 0);
                 if (game.isShooting) this.shoot(game);
-
-                if (this.hp < this.maxHp) {
-                    this.hp = Math.min(this.maxHp, this.hp + this.hpRegen);
-                }
             }
         }
 
         class EnemyTank extends Tank {
             constructor(x, y, team) {
                 super(x, y, team);
-                this.wanderTimer = 0;
-                this.target = null;
+                this.wanderTimer = 0; this.target = null;
                 
-                // Randomize base level for enemies
-                const bonusLevels = Math.floor(Math.random() * 5);
-                for(let i=0; i<bonusLevels; i++) {
-                    this.statLevels[Math.floor(Math.random() * 6)]++;
+                // Randomly assign a class based on a generated level
+                this.level = Math.floor(Math.random() * 100);
+                let availableTier = 1;
+                for(let i=1; i<EVOLUTION_LEVELS.length; i++) {
+                    if (this.level >= EVOLUTION_LEVELS[i]) availableTier = i+1;
                 }
+                const possibleClasses = getTierClasses(availableTier);
+                this.evolve(possibleClasses[Math.floor(Math.random() * possibleClasses.length)]);
+                
+                for(let i=0; i<Math.min(this.level, 42); i++) this.upgradeStat(Math.floor(Math.random()*6));
                 this.hp = this.maxHp;
-                this.xpValue = 250 + (bonusLevels * 50);
-            }
-
-            findTarget(game) {
-                let closestDist = 800; // Aggro radius
-                this.target = null;
-
-                const checkEntities = (entities) => {
-                    for (let e of entities) {
-                        if (e.team === this.team || e.markedForDeletion) continue;
-                        const dist = Math.hypot(e.x - this.x, e.y - this.y);
-                        if (dist < closestDist) {
-                            closestDist = dist;
-                            this.target = e;
-                        }
-                    }
-                };
-
-                checkEntities(game.enemies);
-                checkEntities(game.shapes);
-                if (game.player && game.player.team !== this.team) checkEntities([game.player]);
+                this.xpValue = 500 + (this.level * 100);
             }
 
             update(game) {
-                this.findTarget(game);
+                let closestDist = 800; this.target = null;
+                const check = (entities) => {
+                    for (let e of entities) {
+                        if (e.team === this.team || e.markedForDeletion) continue;
+                        const dist = Math.hypot(e.x - this.x, e.y - this.y);
+                        if (dist < closestDist) { closestDist = dist; this.target = e; }
+                    }
+                };
+                check(game.enemies); check(game.shapes);
+                if (game.player && game.player.team !== this.team) check([game.player]);
 
-                let currentSpeed = this.moveSpeed;
-
+                let isMoving = false;
                 if (this.target) {
-                    const dx = this.target.x - this.x;
-                    const dy = this.target.y - this.y;
-                    const dist = Math.hypot(dx, dy);
-                    
+                    const dx = this.target.x - this.x, dy = this.target.y - this.y;
                     this.angle = Math.atan2(dy, dx);
-                    
-                    if (dist < 300) currentSpeed = -currentSpeed * 0.5; // Back away if too close
-                    else if (dist < 450) currentSpeed = 0; // Stop and shoot
-
+                    let spd = this.moveSpeed;
+                    if (closestDist < 300) spd = -spd * 0.5; else if (closestDist < 500) spd = 0;
+                    this.x += Math.cos(this.angle) * spd; this.y += Math.sin(this.angle) * spd;
                     this.shoot(game);
+                    isMoving = spd !== 0;
                 } else {
                     this.wanderTimer--;
-                    if (this.wanderTimer <= 0) {
-                        this.angle = Math.random() * Math.PI * 2;
-                        this.wanderTimer = 60 + Math.random() * 120;
-                    }
+                    if (this.wanderTimer <= 0) { this.angle = Math.random() * Math.PI * 2; this.wanderTimer = 60 + Math.random() * 120; }
+                    this.x += Math.cos(this.angle) * this.moveSpeed; this.y += Math.sin(this.angle) * this.moveSpeed;
+                    isMoving = true;
                 }
-
-                if (this.shootCooldown > 0) this.shootCooldown--;
-                
-                if (this.hp < this.maxHp) this.hp = Math.min(this.maxHp, this.hp + this.hpRegen);
-
-                this.x += Math.cos(this.angle) * currentSpeed;
-                this.y += Math.sin(this.angle) * currentSpeed;
 
                 this.x = Math.max(this.radius, Math.min(MAP_WIDTH - this.radius, this.x));
                 this.y = Math.max(this.radius, Math.min(MAP_HEIGHT - this.radius, this.y));
+                this.updateTank(game, isMoving);
             }
         }
 
         class Game {
             constructor() {
-                this.canvas = document.getElementById('gameCanvas');
-                this.ctx = this.canvas.getContext('2d');
-                
-                this.keys = {};
-                this.mouseX = 0;
-                this.mouseY = 0;
-                this.isShooting = false;
-                this.camera = { x: 0, y: 0 };
-                this.state = 'PLAYING';
-
-                this.setupInputs();
-                this.resize();
-                window.addEventListener('resize', () => this.resize());
-                
-                this.reset();
-                requestAnimationFrame(() => this.loop());
+                this.canvas = document.getElementById('gameCanvas'); this.ctx = this.canvas.getContext('2d');
+                this.keys = {}; this.mouseX = 0; this.mouseY = 0; this.isShooting = false;
+                this.camera = { x: 0, y: 0, zoom: 1 }; this.state = 'PLAYING'; this.ticks = 0;
+                this.setupInputs(); this.resize(); window.addEventListener('resize', () => this.resize());
+                this.reset(); requestAnimationFrame(() => this.loop());
             }
 
             reset() {
                 this.player = new Player(MAP_WIDTH / 2, MAP_HEIGHT / 2);
-                this.bullets = [];
-                this.shapes = [];
-                this.enemies = [];
-                this.state = 'PLAYING';
-                
-                this.spawnInitialEntities();
+                this.bullets = []; this.shapes = []; this.enemies = []; this.state = 'PLAYING';
+                for (let i = 0; i < 400; i++) this.shapes.push(new Shape(Math.random()*MAP_WIDTH, Math.random()*MAP_HEIGHT, ['square','triangle','pentagon'][Math.floor(Math.random()*3)]));
+                for (let i = 0; i < 30; i++) this.enemies.push(new EnemyTank(Math.random()*MAP_WIDTH, Math.random()*MAP_HEIGHT, Math.random()>0.5?'red':'blue'));
             }
 
-            resize() {
-                this.canvas.width = window.innerWidth;
-                this.canvas.height = window.innerHeight;
-            }
+            resize() { this.canvas.width = window.innerWidth; this.canvas.height = window.innerHeight; }
 
             setupInputs() {
                 window.addEventListener('keydown', e => {
                     this.keys[e.code] = true;
-                    // Upgrade keys 1-6
-                    if (this.state === 'PLAYING' && this.player.skillPoints > 0) {
-                        const keyNum = parseInt(e.key);
-                        if (keyNum >= 1 && keyNum <= 6) {
-                            this.player.upgradeStat(keyNum - 1);
-                        }
-                    }
+                    if (this.state === 'PLAYING' && this.player.skillPoints > 0 && e.key >= '1' && e.key <= '6') this.player.upgradeStat(parseInt(e.key)-1);
                 });
                 window.addEventListener('keyup', e => this.keys[e.code] = false);
-                
-                window.addEventListener('mousemove', e => {
-                    this.mouseX = e.clientX;
-                    this.mouseY = e.clientY;
-                });
-                
+                window.addEventListener('mousemove', e => { this.mouseX = e.clientX; this.mouseY = e.clientY; });
                 window.addEventListener('mousedown', e => {
                     if (e.button === 0) {
                         if (this.state === 'GAMEOVER') this.reset();
-                        else this.isShooting = true;
+                        else if (this.activeEvolutions && this.activeEvolutions.length > 0) {
+                            // Check UI click for evolutions
+                            const boxW = 120, boxH = 40, startX = this.canvas.width/2 - (this.activeEvolutions.length*boxW)/2;
+                            const y = 80;
+                            this.activeEvolutions.forEach((ev, i) => {
+                                const bx = startX + i*boxW;
+                                if(this.mouseX >= bx && this.mouseX <= bx+boxW-10 && this.mouseY >= y && this.mouseY <= y+boxH) {
+                                    this.player.evolve(ev);
+                                }
+                            });
+                        } else this.isShooting = true;
                     }
                 });
-                window.addEventListener('mouseup', e => {
-                    if (e.button === 0) this.isShooting = false;
-                });
+                window.addEventListener('mouseup', e => { if(e.button===0) this.isShooting = false; });
             }
 
-            spawnInitialEntities() {
-                const types = ['square', 'triangle', 'pentagon'];
-                for (let i = 0; i < 150; i++) {
-                    this.shapes.push(new Shape(Math.random() * MAP_WIDTH, Math.random() * MAP_HEIGHT, types[Math.floor(Math.random() * types.length)]));
-                }
-                for (let i = 0; i < 15; i++) {
-                    const team = Math.random() > 0.5 ? 'red' : 'blue';
-                    this.enemies.push(new EnemyTank(Math.random() * MAP_WIDTH, Math.random() * MAP_HEIGHT, team));
-                }
-            }
+            getMouseWorldPos() { return { x: (this.mouseX - this.canvas.width/2) / this.camera.zoom + this.player.x, y: (this.mouseY - this.canvas.height/2) / this.camera.zoom + this.player.y }; }
 
-            getMouseWorldPos() {
-                return { x: this.mouseX + this.camera.x, y: this.mouseY + this.camera.y };
-            }
-
-            handlePhysicalCollision(e1, e2, damageRatio) {
-                const dx = e1.x - e2.x;
-                const dy = e1.y - e2.y;
-                const dist = Math.hypot(dx, dy);
-                const minDist = e1.radius + e2.radius;
-
+            handlePhysics(e1, e2, dmg) {
+                const dx = e1.x - e2.x, dy = e1.y - e2.y, dist = Math.hypot(dx, dy), minDist = e1.radius + e2.radius;
                 if (dist < minDist) {
                     if (e1.team !== e2.team) {
-                        e1.hp -= damageRatio;
-                        e2.hp -= damageRatio;
-                        
-                        // Handle kill XP for body ramming
-                        if (e1.hp <= 0 && e2.addXp && e1.xpValue) e2.addXp(e1.xpValue);
-                        if (e2.hp <= 0 && e1.addXp && e2.xpValue) e1.addXp(e2.xpValue);
+                        e1.hp -= dmg; e2.hp -= dmg;
+                        if (e1.hp<=0 && e2.addXp && e1.xpValue) e2.addXp(e1.xpValue);
+                        if (e2.hp<=0 && e1.addXp && e2.xpValue) e1.addXp(e2.xpValue);
                     }
-
-                    if (e1.hp <= 0) e1.markedForDeletion = true;
-                    if (e2.hp <= 0) e2.markedForDeletion = true;
-
+                    if (e1.hp<=0) e1.markedForDeletion = true; if (e2.hp<=0) e2.markedForDeletion = true;
                     if (dist > 0) {
-                        const overlap = minDist - dist;
-                        const pushX = (dx / dist) * overlap * 0.5;
-                        const pushY = (dy / dist) * overlap * 0.5;
-                        e1.x += pushX; e1.y += pushY;
-                        e2.x -= pushX; e2.y -= pushY;
-                    }
-                }
-            }
-
-            checkCollisions() {
-                const allEntities = [this.player, ...this.enemies, ...this.shapes].filter(e => e && !e.markedForDeletion);
-                
-                // Bullets vs Entities
-                for (let i = this.bullets.length - 1; i >= 0; i--) {
-                    const b = this.bullets[i];
-                    for (let j = 0; j < allEntities.length; j++) {
-                        const e = allEntities[j];
-                        if (b.team === e.team) continue; // No friendly fire
-
-                        if (Math.hypot(b.x - e.x, b.y - e.y) < b.radius + e.radius) {
-                            const dmg = Math.min(b.hp, e.hp);
-                            e.hp -= b.damage;
-                            b.hp -= dmg;
-                            
-                            if (e.hp <= 0) {
-                                e.markedForDeletion = true;
-                                if (b.owner && b.owner.addXp && e.xpValue) b.owner.addXp(e.xpValue);
-                            }
-                            if (b.hp <= 0) {
-                                b.markedForDeletion = true;
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                // Physical Collisions
-                for (let i = 0; i < allEntities.length; i++) {
-                    for (let j = i + 1; j < allEntities.length; j++) {
-                        this.handlePhysicalCollision(allEntities[i], allEntities[j], 1);
+                        const push = (minDist - dist)*0.5;
+                        e1.x += (dx/dist)*push; e1.y += (dy/dist)*push;
+                        e2.x -= (dx/dist)*push; e2.y -= (dy/dist)*push;
                     }
                 }
             }
 
             update() {
                 if (this.state === 'GAMEOVER') return;
+                this.ticks++;
 
                 this.player.update(this.keys, this.getMouseWorldPos(), this);
                 if (this.player.hp <= 0) this.state = 'GAMEOVER';
 
-                this.camera.x = Math.max(0, Math.min(MAP_WIDTH - this.canvas.width, this.player.x - this.canvas.width / 2));
-                this.camera.y = Math.max(0, Math.min(MAP_HEIGHT - this.canvas.height, this.player.y - this.canvas.height / 2));
+                // Target Zoom based on FOV
+                const targetZoom = 1 / (this.player.config.fov || 1);
+                this.camera.zoom += (targetZoom - this.camera.zoom) * 0.1;
+                this.camera.x = this.player.x; this.camera.y = this.player.y;
 
-                this.bullets.forEach(b => b.update());
+                this.bullets.forEach(b => b.update(this));
                 this.shapes.forEach(s => s.update());
                 this.enemies.forEach(e => e.update(this));
 
-                this.checkCollisions();
+                // Collisions
+                const all = [this.player, ...this.enemies, ...this.shapes].filter(e => e && !e.markedForDeletion);
+                for (let i = this.bullets.length - 1; i >= 0; i--) {
+                    const b = this.bullets[i];
+                    for (let j = 0; j < all.length; j++) {
+                        const e = all[j];
+                        if (b.team === e.team) continue;
+                        if (Math.hypot(b.x - e.x, b.y - e.y) < b.radius + e.radius) {
+                            const dmg = Math.min(b.hp, e.hp);
+                            e.hp -= b.damage; b.hp -= dmg;
+                            if (e.hp <= 0) {
+                                e.markedForDeletion = true;
+                                if (b.owner && b.owner.addXp && e.xpValue) b.owner.addXp(e.xpValue);
+                                // Necromancer logic
+                                if (b.owner.config && b.owner.classType === 'Necromancer' && e instanceof Shape && e.type === 'square') {
+                                   this.bullets.push(new Bullet(e.x, e.y, 0, b.owner, {type:'square_drone', d:2, s:1.5}));
+                                }
+                            }
+                            if (b.hp <= 0) { b.markedForDeletion = true; break; }
+                        }
+                    }
+                }
+                for (let i=0; i<all.length; i++) for (let j=i+1; j<all.length; j++) this.handlePhysics(all[i], all[j], 1);
 
                 this.bullets = this.bullets.filter(b => !b.markedForDeletion);
                 this.shapes = this.shapes.filter(s => !s.markedForDeletion);
                 this.enemies = this.enemies.filter(e => !e.markedForDeletion);
 
-                // Respawning
-                if (this.shapes.length < 100) {
-                    const types = ['square', 'triangle', 'pentagon'];
-                    this.shapes.push(new Shape(Math.random() * MAP_WIDTH, Math.random() * MAP_HEIGHT, types[Math.floor(Math.random() * types.length)]));
-                }
-                if (this.enemies.length < 12) {
-                    const team = Math.random() > 0.5 ? 'red' : 'blue';
-                    this.enemies.push(new EnemyTank(Math.random() * MAP_WIDTH, Math.random() * MAP_HEIGHT, team));
-                }
+                if (this.shapes.length < 300) this.shapes.push(new Shape(Math.random()*MAP_WIDTH, Math.random()*MAP_HEIGHT, ['square','triangle','pentagon'][Math.floor(Math.random()*3)]));
+                if (this.enemies.length < 25) this.enemies.push(new EnemyTank(Math.random()*MAP_WIDTH, Math.random()*MAP_HEIGHT, Math.random()>0.5?'red':'blue'));
             }
 
             drawUI() {
-                // XP Bar
-                const barWidth = this.canvas.width * 0.5;
-                const barHeight = 20;
-                const barX = (this.canvas.width - barWidth) / 2;
-                const barY = this.canvas.height - 30;
-                
-                this.ctx.fillStyle = '#555';
-                this.ctx.fillRect(barX, barY, barWidth, barHeight);
-                this.ctx.fillStyle = '#ffd700'; // Gold XP
-                this.ctx.fillRect(barX, barY, barWidth * (this.player.xp / this.player.nextLevelXp), barHeight);
-                this.ctx.strokeStyle = '#333';
-                this.ctx.strokeRect(barX, barY, barWidth, barHeight);
+                const bw = this.canvas.width * 0.5, bh = 20, bx = (this.canvas.width - bw) / 2, by = this.canvas.height - 30;
+                this.ctx.fillStyle = '#555'; this.ctx.fillRect(bx, by, bw, bh);
+                this.ctx.fillStyle = '#ffd700'; this.ctx.fillRect(bx, by, bw * (this.player.xp / this.player.nextLevelXp), bh);
+                this.ctx.strokeStyle = '#333'; this.ctx.strokeRect(bx, by, bw, bh);
+                this.ctx.fillStyle = '#fff'; this.ctx.font = 'bold 14px sans-serif'; this.ctx.textAlign = 'center';
+                this.ctx.fillText(`Level ${this.player.level} - ${this.player.classType}`, this.canvas.width / 2, by + 15);
 
-                this.ctx.fillStyle = '#fff';
-                this.ctx.font = 'bold 14px sans-serif';
-                this.ctx.textAlign = 'center';
-                this.ctx.fillText(`Level ${this.player.level}`, this.canvas.width / 2, barY + 15);
-
-                // Upgrades Panel
-                const startX = 20;
-                let startY = this.canvas.height - 250;
-                
+                const sx = 20, sy = this.canvas.height - 250;
                 if (this.player.skillPoints > 0) {
-                    this.ctx.textAlign = 'left';
-                    this.ctx.fillStyle = '#333';
-                    this.ctx.font = 'bold 18px sans-serif';
-                    this.ctx.fillText(`x${this.player.skillPoints} Upgrades Available!`, startX, startY - 15);
+                    this.ctx.textAlign = 'left'; this.ctx.fillStyle = '#333'; this.ctx.font = 'bold 18px sans-serif';
+                    this.ctx.fillText(`x${this.player.skillPoints} Upgrades Available!`, sx, sy - 15);
                 }
-
                 for (let i = 0; i < 6; i++) {
-                    const level = this.player.statLevels[i];
-                    const y = startY + (i * 35);
-                    
-                    // Stat text & keybind
-                    this.ctx.textAlign = 'left';
-                    this.ctx.font = 'bold 14px sans-serif';
-                    this.ctx.fillStyle = this.player.skillPoints > 0 && level < this.player.maxStatLevel ? '#333' : '#888';
-                    this.ctx.fillText(`[${i + 1}] ${STAT_NAMES[i]}`, startX, y + 16);
-                    
-                    // Upgrade pips
+                    const lvl = this.player.statLevels[i], y = sy + (i * 35);
+                    this.ctx.textAlign = 'left'; this.ctx.font = 'bold 14px sans-serif';
+                    this.ctx.fillStyle = this.player.skillPoints > 0 && lvl < this.player.maxStatLevel ? '#333' : '#888';
+                    this.ctx.fillText(`[${i + 1}] ${STAT_NAMES[i]}`, sx, y + 16);
                     for (let p = 0; p < this.player.maxStatLevel; p++) {
-                        this.ctx.fillStyle = p < level ? STAT_COLORS[i] : '#ccc';
-                        this.ctx.fillRect(startX + 140 + (p * 15), y + 5, 12, 14);
-                        this.ctx.strokeStyle = '#555';
-                        this.ctx.strokeRect(startX + 140 + (p * 15), y + 5, 12, 14);
+                        this.ctx.fillStyle = p < lvl ? STAT_COLORS[i] : '#ccc';
+                        this.ctx.fillRect(sx + 140 + (p * 15), y + 5, 12, 14);
+                        this.ctx.strokeStyle = '#555'; this.ctx.strokeRect(sx + 140 + (p * 15), y + 5, 12, 14);
                     }
                 }
-            }
 
-            drawGrid() {
-                this.ctx.strokeStyle = 'rgba(0, 0, 0, 0.1)';
-                this.ctx.lineWidth = 1;
-                this.ctx.beginPath();
-                const startX = Math.floor(this.camera.x / GRID_SIZE) * GRID_SIZE;
-                const startY = Math.floor(this.camera.y / GRID_SIZE) * GRID_SIZE;
-                for (let x = startX; x <= startX + this.canvas.width + GRID_SIZE; x += GRID_SIZE) {
-                    this.ctx.moveTo(x, this.camera.y); this.ctx.lineTo(x, this.camera.y + this.canvas.height);
-                }
-                for (let y = startY; y <= startY + this.canvas.height + GRID_SIZE; y += GRID_SIZE) {
-                    this.ctx.moveTo(this.camera.x, y); this.ctx.lineTo(this.camera.x + this.canvas.width, y);
-                }
-                this.ctx.stroke();
+                // Evolution UI Menu
+                let currentTierIdx = this.player.config.tier;
+                if (currentTierIdx < EVOLUTION_LEVELS.length && this.player.level >= EVOLUTION_LEVELS[currentTierIdx]) {
+                    this.activeEvolutions = getTierClasses(currentTierIdx + 1);
+                    if (this.activeEvolutions.length > 0) {
+                        this.ctx.fillStyle = 'rgba(255,255,255,0.8)';
+                        this.ctx.fillRect(0, 0, this.canvas.width, 150);
+                        this.ctx.textAlign = 'center'; this.ctx.fillStyle = '#333'; this.ctx.font = 'bold 24px sans-serif';
+                        this.ctx.fillText(`Evolution Available! (Tier ${currentTierIdx + 1})`, this.canvas.width/2, 40);
+                        
+                        const boxW = 120, boxH = 40, startX = this.canvas.width/2 - (this.activeEvolutions.length*boxW)/2;
+                        this.ctx.font = 'bold 14px sans-serif';
+                        this.activeEvolutions.forEach((ev, i) => {
+                            const bx = startX + i*boxW;
+                            this.ctx.fillStyle = '#6abcf1'; this.ctx.fillRect(bx, 80, boxW-10, boxH);
+                            this.ctx.strokeStyle = '#333'; this.ctx.strokeRect(bx, 80, boxW-10, boxH);
+                            this.ctx.fillStyle = '#fff'; this.ctx.fillText(ev, bx + (boxW-10)/2, 105);
+                        });
+                    }
+                } else { this.activeEvolutions = null; }
             }
 
             draw() {
-                this.ctx.fillStyle = '#cdcdcd';
-                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-
+                this.ctx.fillStyle = '#cdcdcd'; this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
                 this.ctx.save();
+                this.ctx.translate(this.canvas.width/2, this.canvas.height/2);
+                this.ctx.scale(this.camera.zoom, this.camera.zoom);
                 this.ctx.translate(-this.camera.x, -this.camera.y);
 
-                this.drawGrid();
-                this.ctx.strokeStyle = '#333';
-                this.ctx.lineWidth = 5;
-                this.ctx.strokeRect(0, 0, MAP_WIDTH, MAP_HEIGHT);
+                // Grid (Optimized for zoom)
+                this.ctx.strokeStyle = 'rgba(0,0,0,0.1)'; this.ctx.lineWidth = 1; this.ctx.beginPath();
+                const viewW = this.canvas.width / this.camera.zoom, viewH = this.canvas.height / this.camera.zoom;
+                const startX = Math.max(0, Math.floor((this.camera.x - viewW/2)/GRID_SIZE)*GRID_SIZE);
+                const startY = Math.max(0, Math.floor((this.camera.y - viewH/2)/GRID_SIZE)*GRID_SIZE);
+                const endX = Math.min(MAP_WIDTH, startX + viewW + GRID_SIZE*2);
+                const endY = Math.min(MAP_HEIGHT, startY + viewH + GRID_SIZE*2);
+                for (let x = startX; x <= endX; x += GRID_SIZE) { this.ctx.moveTo(x, startY); this.ctx.lineTo(x, endY); }
+                for (let y = startY; y <= endY; y += GRID_SIZE) { this.ctx.moveTo(startX, y); this.ctx.lineTo(endX, y); }
+                this.ctx.stroke();
+
+                this.ctx.strokeStyle = '#333'; this.ctx.lineWidth = 5; this.ctx.strokeRect(0, 0, MAP_WIDTH, MAP_HEIGHT);
 
                 this.shapes.forEach(s => s.draw(this.ctx));
-                this.enemies.forEach(e => e.draw(this.ctx));
                 this.bullets.forEach(b => b.draw(this.ctx));
-                
+                this.enemies.forEach(e => e.draw(this.ctx));
                 if (this.state === 'PLAYING') this.player.draw(this.ctx);
 
                 this.ctx.restore();
 
-                if (this.state === 'PLAYING') {
-                    this.drawUI();
-                } else if (this.state === 'GAMEOVER') {
-                    this.ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
-                    this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-                    this.ctx.fillStyle = '#fff';
-                    this.ctx.textAlign = 'center';
-                    this.ctx.font = 'bold 60px sans-serif';
+                if (this.state === 'PLAYING') this.drawUI();
+                else {
+                    this.ctx.fillStyle = 'rgba(0, 0, 0, 0.6)'; this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                    this.ctx.fillStyle = '#fff'; this.ctx.textAlign = 'center'; this.ctx.font = 'bold 60px sans-serif';
                     this.ctx.fillText('GAME OVER', this.canvas.width / 2, this.canvas.height / 2 - 20);
-                    this.ctx.font = '24px sans-serif';
-                    this.ctx.fillText(`You reached Level ${this.player.level}`, this.canvas.width / 2, this.canvas.height / 2 + 20);
-                    this.ctx.fillText('Click anywhere to restart', this.canvas.width / 2, this.canvas.height / 2 + 60);
+                    this.ctx.font = '24px sans-serif'; this.ctx.fillText(`Class: ${this.player.classType} (Lv.${this.player.level})`, this.canvas.width/2, this.canvas.height/2 + 20);
+                    this.ctx.fillText('Click to restart', this.canvas.width / 2, this.canvas.height / 2 + 60);
                 }
             }
 
-            loop() {
-                this.update();
-                this.draw();
-                requestAnimationFrame(() => this.loop());
-            }
+            loop() { this.update(); this.draw(); requestAnimationFrame(() => this.loop()); }
         }
 
         window.onload = () => new Game();
