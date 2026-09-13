@@ -3,76 +3,77 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tank Arena Game - Step 4</title>
+    <title>Cosmic Arena - Final Evolution</title>
     <style>
-        body { margin: 0; padding: 0; overflow: hidden; background-color: #f0f0f0; font-family: sans-serif; user-select: none; }
+        body { margin: 0; padding: 0; overflow: hidden; background-color: #0b0b1a; font-family: sans-serif; user-select: none; color: white;}
         canvas { display: block; }
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
     </style>
 </head>
 <body>
     <canvas id="gameCanvas"></canvas>
+    <div id="ui-layer"></div>
 
     <script>
         // --- CONSTANTS & CONFIG ---
-        const MAP_WIDTH = 8000;
-        const MAP_HEIGHT = 8000;
-        const GRID_SIZE = 50;
+        const MAP_WIDTH = 8000, MAP_HEIGHT = 8000, GRID_SIZE = 50;
 
-        // Upgrade Levels: T1->T2(15), T2->T3(30), etc.
-        const EVOLUTION_LEVELS = [0, 15, 30, 45, 60, 75, 90, 105, 120, 135];
-        
+        // Exponential Scaling for God-Tiers
+        const EVOLUTION_LEVELS = [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 200, 300, 450, 650, 900, 1200, 1600, 2100, 2700, 3500];
         const STAT_NAMES = ['Health Regen', 'Max Health', 'Bullet Speed', 'Bullet Damage', 'Reload', 'Movement Speed'];
         const STAT_COLORS = ['#e2ab69', '#e67ebf', '#6abcf1', '#f14e54', '#85e37d', '#768dfc'];
 
-        // Helper to generate symmetric barrels
-        const makeBarrels = (count, l, w, offset = 0) => Array.from({length: count}, (_, i) => ({l, w, a: (360/count)*i + offset}));
+        const makeBarrels = (c, l, w, off=0) => Array.from({length: c}, (_, i) => ({l, w, a: (360/c)*i + off}));
 
-        // b: barrels [ {l:length, w:width, x, y, a:angle(deg), r:reloadMult, d:dmgMult, s:spdMult, spr:spread, type, rec:recoil} ]
+        // --- TANK EVOLUTION TREE (Tiers 1 - 20) ---
         const TANK_CLASSES = {
             'Base': { tier: 1, b: [{l:35, w:18}] },
-            // Tier 2
             'Twin': { tier: 2, b: [{l:35, w:18, y:-10}, {l:35, w:18, y:10}] },
             'Sniper': { tier: 2, fov: 1.25, b: [{l:45, w:18, r:1.5, d:1.5, s:1.5}] },
             'Machine Gun': { tier: 2, b: [{l:35, w:22, spr:0.3, r:0.5}] },
-            // Tier 3
             'Quad': { tier: 3, b: makeBarrels(4, 35, 18) },
             'Assassin': { tier: 3, fov: 1.5, b: [{l:50, w:18, r:2, d:2, s:2}] },
             'Destroyer': { tier: 3, b: [{l:30, w:30, r:3, d:4, s:0.8, type:'heavy', rec:15}] },
-            // Tier 4
             'Octo': { tier: 4, b: makeBarrels(8, 35, 18) },
             'Ranger': { tier: 4, fov: 1.8, b: [{l:55, w:18, r:2.5, d:3, s:2.5}] },
             'Annihilator': { tier: 4, b: [{l:30, w:40, r:3.5, d:6, s:0.8, type:'heavy', rec:25}] },
-            // Tier 5
             'Pentashot': { tier: 5, b: [{l:35,w:16},{l:30,w:16,a:20},{l:30,w:16,a:-20},{l:25,w:16,a:40},{l:25,w:16,a:-40}] },
             'Stalker': { tier: 5, invis: true, fov: 1.5, b: [{l:50, w:18, r:2, d:2, s:2}] },
             'Skimmer': { tier: 5, b: [{l:35, w:20, type:'skimmer', r:2}] },
-            // Tier 6
             'Fighter': { tier: 6, b: [{l:35,w:18},{l:25,w:16,a:90},{l:25,w:16,a:-90},{l:25,w:16,a:150,rec:5},{l:25,w:16,a:-150,rec:5}] },
             'Overlord': { tier: 6, b: [{l:25, w:30, type:'drone', max: 8}], fov: 1.2 },
             'Necromancer': { tier: 6, b: [{l:25, w:30, type:'square_drone', max: 15}] },
-            // Tier 7
             'Battleship': { tier: 7, b: [{l:20, w:10, a:90, type:'micro', r:0.2}, {l:20, w:10, a:-90, type:'micro', r:0.2}] },
             'Factory': { tier: 7, b: [{l:25, w:30, type:'minion', r:3, max: 4}] },
             'Auto-Gunner': { tier: 7, autoTurrets: 1, b: [{l:35,w:15,y:-5},{l:35,w:15,y:5},{l:35,w:15,y:0,a:180}] },
-            // Tier 8
             'Artillery': { tier: 8, b: [{l:40, w:20, type:'artillery', r:2, d:2}] },
-            'Laser Cannon': { tier: 8, b: [{l:35, w:15, type:'laser', r:0.1, d:0.2}] }, // Raycast emulation via extremely fast piercing bullets
+            'Laser Cannon': { tier: 8, b: [{l:35, w:15, type:'laser', r:0.1, d:0.2}] },
             'Tesla Coil': { tier: 8, tesla: true, b: [] },
-            // Tier 9
             'Plasma Emitter': { tier: 9, b: [{l:35, w:25, type:'plasma', s:0.5, d:0.5, r:0.5}] },
             'Railgun': { tier: 9, fov: 1.6, b: [{l:60, w:12, type:'railgun', r:5, d:10, s:4, rec:20}] },
             'Orbiting Swarm': { tier: 9, swarm: true, b: [{l:35, w:18}] },
-            // Tier 10
             'Mothership': { tier: 10, fov: 1.5, maxHpMult: 3, b: [{l:25, w:30, type:'drone', max: 30}] },
-            'Dreadnought': { tier: 10, autoTurrets: 6, maxHpMult: 5, b: [{l:40, w:25, type:'heavy'}] }
+            'Dreadnought': { tier: 10, autoTurrets: 6, maxHpMult: 5, b: [{l:40, w:25, type:'heavy'}] },
+            // --- GOD TIERS ---
+            'Antimatter Caster': { tier: 11, b: [{l:45, w:20, type:'antimatter', r:1.5, s:0.5}] },
+            'Singularity Engine': { tier: 12, b: [{l:30, w:35, type:'blackhole', r:10}] },
+            'Chrono-Tank': { tier: 13, fov: 1.3, aura: 'chrono', b: [{l:40, w:20, d:2}] },
+            'Dimensional Rift': { tier: 14, ability: 'teleport', fov: 1.4, b: [{l:40, w:15, r:0.5}] },
+            'Star-Eater': { tier: 15, aura: 'drain', maxHpMult: 4, b: [{l:35, w:22, type:'plasma', d:2}] },
+            'Supernova': { tier: 16, passive: 'supernova', b: [{l:45, w:25, r:1.5, d:3, type:'heavy'}] },
+            'Nebula Weaver': { tier: 17, passive: 'trail', moveSpeedMult: 1.5, b: [{l:35, w:18, type:'heavy'}] },
+            'Quasar': { tier: 18, passive: 'quasar', fov: 1.5, b: [{l:50, w:15, type:'laser', r:0.05, d:0.3}, {l:50, w:15, type:'laser', r:0.05, d:0.3, a:180}] },
+            'The Monolith': { tier: 19, fov: 2.5, speedMult: 0, maxHpMult: 25, b: [{l:60, w:40, type:'seeker', r:3, d:5}] },
+            'Cosmic Overseer': { tier: 20, fov: 5, ability: 'orbital', maxHpMult: 50, speedMult: 0.2, b: [] }
         };
 
-        const getTierClasses = (tier) => Object.keys(TANK_CLASSES).filter(k => TANK_CLASSES[k].tier === tier);
+        const getTierClasses = (t) => Object.keys(TANK_CLASSES).filter(k => TANK_CLASSES[k].tier === t);
+        const randItem = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
         // --- UTILITIES ---
-        function drawHealthBar(ctx, x, y, hp, maxHp, yOffset) {
+        function drawHealthBar(ctx, x, y, hp, maxHp, yOffset, w=40) {
             if (hp >= maxHp || hp <= 0) return;
-            const w = 40, h = 6, bx = x - w/2, by = y + yOffset;
+            const h = 6, bx = x - w/2, by = y + yOffset;
             ctx.fillStyle = '#555'; ctx.fillRect(bx, by, w, h);
             ctx.fillStyle = '#85e37d'; ctx.fillRect(bx, by, Math.max(0, w * (hp / maxHp)), h);
             ctx.strokeStyle = '#333'; ctx.lineWidth = 1; ctx.strokeRect(bx, by, w, h);
@@ -86,43 +87,81 @@
                 this.speed = (owner.bSpeed || 10) * (config.s || 1);
                 this.damage = (owner.bDamage || 10) * (config.d || 1);
                 this.vx = Math.cos(angle) * this.speed; this.vy = Math.sin(angle) * this.speed;
-                this.radius = this.type === 'heavy' ? 16 : this.type === 'micro' ? 4 : 8;
-                this.life = this.type === 'plasma' ? 300 : this.type === 'laser' ? 5 : 100;
-                this.hp = this.type === 'plasma' || this.type === 'railgun' ? 9999 : this.damage; // Piercing
-                this.markedForDeletion = false;
-                this.angle = angle;
+                this.radius = ['heavy','blackhole','supernova_blast','shockwave'].includes(this.type) ? 16 : this.type==='micro'?4 : 8;
+                this.life = ['plasma','blackhole'].includes(this.type) ? 300 : this.type==='laser' ? 5 : this.type==='orbital' ? 120 : this.type==='toxic_trail'? 200 : 100;
+                this.hp = ['plasma','railgun','blackhole','supernova_blast','shockwave','orbital','toxic_trail'].includes(this.type) ? 999999 : this.damage; 
+                this.markedForDeletion = false; this.angle = angle;
                 
-                if (this.type.includes('drone') || this.type === 'minion') {
-                    this.life = 9999;
-                    this.hp = this.damage * 3; // Drones have body health
+                if (this.type === 'blackhole') { this.vx = 0; this.vy = 0; this.radius = 40; }
+                if (this.type === 'orbital') { this.vx = 0; this.vy = 0; this.radius = 150; }
+                if (this.type === 'toxic_trail') { this.vx = 0; this.vy = 0; this.radius = 35; }
+
+                if (this.type.includes('drone') || this.type === 'minion' || this.type === 'seeker') {
+                    this.life = 9999; this.hp = this.damage * 3;
                 }
             }
 
             update(game) {
-                if (this.type.includes('drone') || this.type === 'minion') {
-                    // Drone AI (Seek mouse if player, seek enemy if AI)
+                // Tracking AI logic
+                if (this.type.includes('drone') || this.type === 'minion' || this.type === 'seeker') {
                     let target = null;
-                    if (this.owner instanceof Player) target = game.getMouseWorldPos();
-                    else if (this.owner.target) target = {x: this.owner.target.x, y: this.owner.target.y};
+                    if (this.type === 'seeker') {
+                        // Map-wide seeking for Monolith
+                        let closest = 99999;
+                        [...game.enemies, game.player].forEach(e => {
+                            if (e && e.team !== this.team) {
+                                let d = Math.hypot(e.x-this.x, e.y-this.y);
+                                if(d < closest) { closest = d; target = e; }
+                            }
+                        });
+                    } else {
+                        if (this.owner instanceof Player) target = game.getMouseWorldPos();
+                        else if (this.owner.target) target = {x: this.owner.target.x, y: this.owner.target.y};
+                    }
 
                     if (target) {
-                        const dx = target.x - this.x;
-                        const dy = target.y - this.y;
-                        const desiredAngle = Math.atan2(dy, dx);
-                        this.vx += Math.cos(desiredAngle) * 0.5;
-                        this.vy += Math.sin(desiredAngle) * 0.5;
+                        const desiredAngle = Math.atan2(target.y - this.y, target.x - this.x);
+                        this.vx += Math.cos(desiredAngle) * 0.8; this.vy += Math.sin(desiredAngle) * 0.8;
                     }
-                    // Friction
-                    this.vx *= 0.95; this.vy *= 0.95;
-                    
-                    if(this.owner.markedForDeletion) this.hp -= 0.5; // Die if owner dies
+                    this.vx *= 0.95; this.vy *= 0.95; // Friction
+                    if(this.owner.markedForDeletion && this.type !== 'seeker') this.hp -= 0.5;
+                }
+
+                // Gravity effects (Antimatter)
+                if (this.type === 'antimatter') {
+                    [...game.enemies, ...game.shapes, game.player].forEach(e => {
+                        if (e && e.team !== this.team && !e.markedForDeletion) {
+                            const dx = this.x - e.x, dy = this.y - e.y, dist = Math.hypot(dx,dy);
+                            if (dist < 250 && dist > 10) { e.x += (dx/dist)*3; e.y += (dy/dist)*3; }
+                        }
+                    });
+                }
+                
+                // Blackhole & AOEs
+                if (this.type === 'blackhole') {
+                    this.radius = 40 + Math.sin(this.life*0.1)*5;
+                    [...game.enemies, ...game.shapes, game.player].forEach(e => {
+                        if (e && e.team !== this.team && !e.markedForDeletion) {
+                            const dx = this.x - e.x, dy = this.y - e.y, dist = Math.hypot(dx,dy);
+                            if (dist < 400 && dist > 10) { e.x += (dx/dist)*6; e.y += (dy/dist)*6; }
+                            if (dist < this.radius) e.hp -= this.damage * 0.2; // Constant crush dmg
+                        }
+                    });
+                }
+
+                if (this.type === 'supernova_blast' || this.type === 'shockwave') {
+                    this.radius += this.type === 'supernova_blast' ? 40 : 15;
+                    this.life -= 2; // Dies fast
                 }
 
                 if (this.type === 'skimmer' && this.life % 10 === 0) {
                     game.bullets.push(new Bullet(this.x, this.y, this.angle + (this.life*0.2), this.owner, {type:'basic', s:0.5, d:0.5}));
                 }
 
-                this.x += this.vx; this.y += this.vy;
+                // Apply time dilation if slowed
+                let speedMult = this.slowed ? 0.1 : 1;
+                this.x += this.vx * speedMult; this.y += this.vy * speedMult;
+                this.slowed = false; // Reset every frame
                 this.life--;
 
                 if (this.life <= 0 || this.x < 0 || this.x > MAP_WIDTH || this.y < 0 || this.y > MAP_HEIGHT) {
@@ -138,28 +177,42 @@
                 if(this.type === 'square_drone' || this.type === 'minion') {
                     ctx.rect(this.x - this.radius, this.y - this.radius, this.radius*2, this.radius*2);
                 } else if (this.type === 'laser' || this.type === 'railgun') {
-                    ctx.moveTo(this.x, this.y);
-                    ctx.lineTo(this.x - this.vx*2, this.y - this.vy*2);
+                    ctx.moveTo(this.x, this.y); ctx.lineTo(this.x - this.vx*2, this.y - this.vy*2);
                     ctx.lineWidth = this.type === 'railgun' ? 8 : 3;
                     ctx.strokeStyle = this.color; ctx.stroke(); return;
+                } else if (this.type === 'orbital') {
+                    ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                    if (this.life > 40) { // Warning phase
+                        ctx.strokeStyle = 'rgba(255, 0, 0, 0.5)'; ctx.lineWidth = 5; ctx.stroke(); return;
+                    } else { // Strike phase
+                        ctx.fillStyle = 'rgba(255, 255, 255, 0.8)'; ctx.fill(); return;
+                    }
+                } else if (this.type === 'supernova_blast' || this.type === 'shockwave') {
+                    ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                    ctx.fillStyle = this.type === 'shockwave' ? 'rgba(100, 150, 255, 0.4)' : 'rgba(255, 100, 50, 0.6)'; 
+                    ctx.fill(); return;
+                } else if (this.type === 'toxic_trail') {
+                    ctx.arc(this.x, this.y, this.radius, 0, Math.PI*2);
+                    ctx.fillStyle = `rgba(150, 50, 200, ${this.life/400})`; ctx.fill(); return;
+                } else if (this.type === 'blackhole') {
+                    ctx.arc(this.x, this.y, this.radius, 0, Math.PI*2);
+                    ctx.fillStyle = 'black'; ctx.fill();
+                    ctx.strokeStyle = 'purple'; ctx.lineWidth = 4; ctx.stroke(); return;
                 } else {
                     ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
                 }
-                ctx.fillStyle = this.color; ctx.fill();
-                ctx.strokeStyle = '#555'; ctx.lineWidth = 2; ctx.stroke();
+                ctx.fillStyle = this.type === 'antimatter' ? '#333' : this.color; ctx.fill();
+                ctx.strokeStyle = this.type === 'antimatter' ? 'purple' : '#555'; ctx.lineWidth = 2; ctx.stroke();
             }
         }
 
         class Shape {
             constructor(x, y, type) {
-                this.x = x; this.y = y; this.type = type; 
-                this.angle = Math.random() * Math.PI * 2;
-                this.spin = (Math.random() - 0.5) * 0.02;
+                this.x = x; this.y = y; this.type = type; this.angle = Math.random() * Math.PI * 2; this.spin = (Math.random() - 0.5) * 0.02;
                 this.markedForDeletion = false; this.team = 'neutral';
-                
-                if (this.type === 'square') { this.radius = 15; this.color = '#ffe869'; this.sides = 4; this.maxHp = 10; this.xpValue = 10; }
-                else if (this.type === 'triangle') { this.radius = 18; this.color = '#fc7677'; this.sides = 3; this.maxHp = 30; this.xpValue = 25; }
-                else if (this.type === 'pentagon') { this.radius = 25; this.color = '#768dfc'; this.sides = 5; this.maxHp = 100; this.xpValue = 130; }
+                if (this.type === 'square') { this.radius = 15; this.color = '#ffe869'; this.sides = 4; this.maxHp = 10; this.xpValue = 15; }
+                else if (this.type === 'triangle') { this.radius = 18; this.color = '#fc7677'; this.sides = 3; this.maxHp = 30; this.xpValue = 40; }
+                else if (this.type === 'pentagon') { this.radius = 25; this.color = '#768dfc'; this.sides = 5; this.maxHp = 100; this.xpValue = 150; }
                 this.hp = this.maxHp;
             }
             update() {
@@ -168,16 +221,11 @@
                 this.y = Math.max(this.radius, Math.min(MAP_HEIGHT - this.radius, this.y));
             }
             draw(ctx) {
-                ctx.save(); ctx.translate(this.x, this.y); ctx.rotate(this.angle);
-                ctx.beginPath();
-                for (let i = 0; i < this.sides; i++) {
-                    const a = (i * 2 * Math.PI) / this.sides;
-                    ctx[i === 0 ? 'moveTo' : 'lineTo'](Math.cos(a) * this.radius, Math.sin(a) * this.radius);
+                ctx.save(); ctx.translate(this.x, this.y); ctx.rotate(this.angle); ctx.beginPath();
+                for (let i=0; i<this.sides; i++) {
+                    const a = (i*2*Math.PI)/this.sides; ctx[i===0?'moveTo':'lineTo'](Math.cos(a)*this.radius, Math.sin(a)*this.radius);
                 }
-                ctx.closePath();
-                ctx.fillStyle = this.color; ctx.fill();
-                ctx.strokeStyle = '#555'; ctx.lineWidth = 3; ctx.stroke();
-                ctx.restore();
+                ctx.closePath(); ctx.fillStyle = this.color; ctx.fill(); ctx.strokeStyle = '#555'; ctx.lineWidth = 3; ctx.stroke(); ctx.restore();
                 drawHealthBar(ctx, this.x, this.y, this.hp, this.maxHp, -this.radius - 15);
             }
         }
@@ -185,33 +233,26 @@
         class Tank {
             constructor(x, y, team) {
                 this.x = x; this.y = y; this.team = team; this.color = team === 'blue' ? '#00b2e1' : '#f14e54';
-                this.radius = 20; this.angle = 0;
-                this.markedForDeletion = false;
-                
-                this.classType = 'Base';
-                this.cooldowns = [];
-                this.alpha = 1; // For Stalker
-                this.orbitAngle = 0; // For Orbiting Swarm
-
-                this.level = 1; this.xp = 0; this.nextLevelXp = 50; this.skillPoints = 0;
-                this.statLevels = [0, 0, 0, 0, 0, 0]; 
-                this.maxStatLevel = 7;
+                this.radius = 20; this.angle = 0; this.markedForDeletion = false;
+                this.classType = 'Base'; this.cooldowns = []; this.alpha = 1; this.orbitAngle = 0; this.abilityCooldown = 0;
+                this.level = 1; this.xp = 0; this.nextLevelXp = EVOLUTION_LEVELS[1] || 50; this.skillPoints = 0;
+                this.statLevels = [0, 0, 0, 0, 0, 0]; this.maxStatLevel = 7; this.supernovaUsed = false;
                 this.hp = this.maxHp;
             }
 
             get config() { return TANK_CLASSES[this.classType]; }
-            get hpRegen() { return 0.02 + (this.statLevels[0] * 0.02); }
-            get maxHp() { return (100 + (this.statLevels[1] * 20)) * (this.config.maxHpMult || 1); }
-            get bSpeed() { return 8 + (this.statLevels[2] * 1.5); }
-            get bDamage() { return 10 + (this.statLevels[3] * 4); }
+            get hpRegen() { return 0.02 + (this.statLevels[0] * 0.05); }
+            get maxHp() { return (100 + (this.statLevels[1] * 30)) * (this.config.maxHpMult || 1); }
+            get bSpeed() { return 8 + (this.statLevels[2] * 2); }
+            get bDamage() { return 10 + (this.statLevels[3] * 5); }
             get reloadTime() { return Math.max(5, 30 - (this.statLevels[4] * 3)); }
-            get moveSpeed() { return 3 + (this.statLevels[5] * 0.4); }
+            get moveSpeed() { return (3 + (this.statLevels[5] * 0.5)) * (this.config.speedMult !== undefined ? this.config.speedMult : 1) * (this.config.moveSpeedMult || 1); }
 
             addXp(amount) {
                 this.xp += amount;
                 while (this.xp >= this.nextLevelXp) {
                     this.xp -= this.nextLevelXp; this.level++; this.skillPoints++;
-                    this.nextLevelXp = Math.floor(this.nextLevelXp * 1.2);
+                    this.nextLevelXp = EVOLUTION_LEVELS[this.level] || (this.level*200); // Fallback scale
                     this.hp = this.maxHp;
                 }
             }
@@ -220,135 +261,140 @@
                 if (TANK_CLASSES[newClass]) {
                     this.classType = newClass;
                     this.cooldowns = new Array(this.config.b.length).fill(0);
-                    this.hp = this.maxHp;
+                    this.hp = this.maxHp; this.radius = this.classType === 'Cosmic Overseer' ? 80 : this.classType === 'The Monolith' ? 50 : 20;
                 }
             }
 
             upgradeStat(index) {
                 if (this.skillPoints > 0 && this.statLevels[index] < this.maxStatLevel) {
                     this.statLevels[index]++; this.skillPoints--;
-                    if (index === 1) this.hp += 20 * (this.config.maxHpMult || 1); 
+                    if (index === 1) this.hp += 30 * (this.config.maxHpMult || 1); 
                 }
             }
 
             shoot(game) {
                 const barrels = this.config.b;
+                if (!barrels) return;
                 barrels.forEach((b, i) => {
                     if (this.cooldowns[i] > 0) return;
-                    
                     const bAngle = this.angle + (b.a ? b.a * Math.PI/180 : 0);
                     const spread = b.spr ? (Math.random() - 0.5) * b.spr : 0;
                     const finalAngle = bAngle + spread;
                     
-                    // Drone Cap check
-                    if (b.type === 'drone' || b.type === 'minion' || b.type === 'square_drone') {
-                        const activeDrones = game.bullets.filter(bullet => bullet.owner === this && bullet.type === b.type).length;
-                        if (activeDrones >= (b.max || 8)) return;
+                    if (['drone','minion','square_drone','seeker'].includes(b.type)) {
+                        if (game.bullets.filter(bl => bl.owner === this && bl.type === b.type).length >= (b.max || 8)) return;
                     }
-
-                    // Calculate tip of barrel considering offsets
                     const cx = this.x + Math.cos(this.angle + Math.PI/2) * (b.y || 0) + Math.cos(this.angle) * (b.x || 0);
                     const cy = this.y + Math.sin(this.angle + Math.PI/2) * (b.y || 0) + Math.sin(this.angle) * (b.x || 0);
-                    const tipX = cx + Math.cos(bAngle) * (b.l || 35);
-                    const tipY = cy + Math.sin(bAngle) * (b.l || 35);
+                    const tipX = cx + Math.cos(bAngle) * (b.l || 35); const tipY = cy + Math.sin(bAngle) * (b.l || 35);
 
                     game.bullets.push(new Bullet(tipX, tipY, finalAngle, this, b));
                     this.cooldowns[i] = this.reloadTime * (b.r || 1);
-
-                    // Recoil
-                    if (b.rec) {
-                        this.x -= Math.cos(bAngle) * b.rec;
-                        this.y -= Math.sin(bAngle) * b.rec;
-                    }
+                    if (b.rec) { this.x -= Math.cos(bAngle) * b.rec; this.y -= Math.sin(bAngle) * b.rec; }
                 });
+            }
+
+            useAbility(game, mouseWorldPos) {
+                if (this.abilityCooldown > 0) return;
+                if (this.config.ability === 'teleport') {
+                    game.bullets.push(new Bullet(this.x, this.y, 0, this, {type:'shockwave', d:5}));
+                    this.x = mouseWorldPos.x; this.y = mouseWorldPos.y;
+                    game.bullets.push(new Bullet(this.x, this.y, 0, this, {type:'shockwave', d:5}));
+                    this.abilityCooldown = 60;
+                }
+                if (this.config.ability === 'orbital') {
+                    game.bullets.push(new Bullet(mouseWorldPos.x, mouseWorldPos.y, 0, this, {type:'orbital', d:50}));
+                    this.abilityCooldown = 20;
+                }
             }
 
             updateTank(game, isMoving) {
                 for(let i=0; i<this.cooldowns.length; i++) if (this.cooldowns[i] > 0) this.cooldowns[i]--;
-                
+                if (this.abilityCooldown > 0) this.abilityCooldown--;
                 if (this.hp < this.maxHp) this.hp = Math.min(this.maxHp, this.hp + this.hpRegen);
 
-                // Special Mechanics
-                if (this.config.invis) {
-                    this.alpha = isMoving ? 1 : Math.max(0.1, this.alpha - 0.02);
-                } else this.alpha = 1;
+                this.alpha = (this.config.invis && !isMoving) ? Math.max(0.1, this.alpha - 0.02) : 1;
 
+                if (this.config.aura === 'chrono') {
+                    [...game.enemies, ...game.bullets, game.player].forEach(e => {
+                        if (e && e.team !== this.team && Math.hypot(e.x-this.x, e.y-this.y) < 500) e.slowed = true;
+                    });
+                }
+                if (this.config.aura === 'drain' && game.ticks % 10 === 0) {
+                    const viewW = game.canvas.width/game.camera.zoom, viewH = game.canvas.height/game.camera.zoom;
+                    [...game.enemies, ...game.shapes, game.player].forEach(e => {
+                        if (e && e.team !== this.team && Math.abs(e.x-this.x)<viewW && Math.abs(e.y-this.y)<viewH) {
+                            e.hp -= this.bDamage*0.2; this.hp = Math.min(this.maxHp, this.hp + this.bDamage*0.1);
+                        }
+                    });
+                }
+                if (this.config.passive === 'supernova' && this.hp < this.maxHp * 0.2 && !this.supernovaUsed) {
+                    this.supernovaUsed = true; game.bullets.push(new Bullet(this.x, this.y, 0, this, {type:'supernova_blast', d:20}));
+                }
+                if (this.config.passive === 'trail' && isMoving && game.ticks % 10 === 0) {
+                    game.bullets.push(new Bullet(this.x, this.y, 0, this, {type:'toxic_trail', d:0.5}));
+                }
+                if (this.config.passive === 'quasar') {
+                    this.angle += 0.02; // Auto spin for Quasar
+                }
                 if (this.config.tesla && game.ticks % 30 === 0) {
                     [...game.enemies, ...game.shapes, game.player].forEach(e => {
-                        if (e && e.team !== this.team && !e.markedForDeletion && Math.hypot(e.x - this.x, e.y - this.y) < 200) {
+                        if (e && e.team !== this.team && !e.markedForDeletion && Math.hypot(e.x-this.x, e.y-this.y) < 250) {
                             e.hp -= this.bDamage;
-                            // Add lightning visual cue (simple flash)
                             game.ctx.beginPath(); game.ctx.moveTo(this.x, this.y); game.ctx.lineTo(e.x, e.y);
-                            game.ctx.strokeStyle = '#6abcf1'; game.ctx.lineWidth = 2; game.ctx.stroke();
+                            game.ctx.strokeStyle = '#6abcf1'; game.ctx.lineWidth = 3; game.ctx.stroke();
                         }
                     });
                 }
-                
                 if (this.config.swarm) {
                     this.orbitAngle += 0.05;
-                    // Emulate swarm by drawing and damaging nearby
                     [...game.enemies, ...game.shapes, game.player].forEach(e => {
-                        if (e && e.team !== this.team && Math.hypot(e.x - this.x, e.y - this.y) < 80) e.hp -= 0.5;
+                        if (e && e.team !== this.team && Math.hypot(e.x-this.x, e.y-this.y) < 100) e.hp -= 1;
                     });
                 }
-                
                 if (this.config.autoTurrets && game.ticks % 20 === 0) {
-                    // Find closest enemy, shoot generic bullet
-                    let closest = null, dist = 400;
-                    [...game.enemies, ...game.shapes, game.player].forEach(e => {
-                        if(e && e.team !== this.team) {
-                            let d = Math.hypot(e.x - this.x, e.y - this.y);
-                            if(d < dist) { dist = d; closest = e; }
-                        }
-                    });
-                    if (closest) {
-                        const a = Math.atan2(closest.y - this.y, closest.x - this.x);
-                        game.bullets.push(new Bullet(this.x, this.y, a, this, {type:'basic', s:1, d:0.5}));
+                    for(let t=0; t<this.config.autoTurrets; t++) {
+                        let closest = null, dist = 500;
+                        [...game.enemies, ...game.shapes, game.player].forEach(e => {
+                            if(e && e.team !== this.team) { let d = Math.hypot(e.x-this.x, e.y-this.y); if(d<dist){dist=d;closest=e;} }
+                        });
+                        if (closest) game.bullets.push(new Bullet(this.x, this.y, Math.atan2(closest.y-this.y, closest.x-this.x) + (Math.random()-0.5)*0.2, this, {type:'basic', s:1.5, d:0.8}));
                     }
                 }
             }
 
             draw(ctx) {
-                ctx.save(); ctx.translate(this.x, this.y);
-                ctx.globalAlpha = this.alpha;
+                ctx.save(); ctx.translate(this.x, this.y); ctx.globalAlpha = this.alpha;
                 
-                // Draw Barrels
-                this.config.b.forEach(b => {
-                    ctx.save();
-                    const bAngle = (b.a || 0) * Math.PI/180;
+                if (this.classType === 'Cosmic Overseer') {
+                    // Draw Eye
                     ctx.rotate(this.angle);
-                    ctx.translate(b.x || 0, b.y || 0); // Offset
-                    ctx.rotate(bAngle); // Independent rotation
-                    ctx.fillStyle = '#999'; ctx.strokeStyle = '#555'; ctx.lineWidth = 3;
-                    ctx.fillRect(0, -(b.w || 18) / 2, (b.l || 35), (b.w || 18));
-                    ctx.strokeRect(0, -(b.w || 18) / 2, (b.l || 35), (b.w || 18));
-                    ctx.restore();
-                });
-
-                // Draw Swarm
-                if (this.config.swarm) {
-                    for(let i=0; i<3; i++) {
-                        const sx = Math.cos(this.orbitAngle + (i*Math.PI*2/3)) * 60;
-                        const sy = Math.sin(this.orbitAngle + (i*Math.PI*2/3)) * 60;
-                        ctx.beginPath(); ctx.arc(sx, sy, 8, 0, Math.PI*2);
-                        ctx.fillStyle = this.color; ctx.fill(); ctx.stroke();
+                    ctx.beginPath(); ctx.ellipse(0,0, 80, 40, 0, 0, Math.PI*2); ctx.fillStyle = '#fff'; ctx.fill(); ctx.stroke();
+                    ctx.beginPath(); ctx.arc(0,0, 30, 0, Math.PI*2); ctx.fillStyle = this.color; ctx.fill();
+                    ctx.beginPath(); ctx.arc(0,0, 15, 0, Math.PI*2); ctx.fillStyle = '#000'; ctx.fill();
+                } else if (this.classType === 'The Monolith') {
+                    ctx.beginPath(); ctx.rect(-50,-50,100,100); ctx.fillStyle = '#333'; ctx.fill(); ctx.lineWidth=5; ctx.strokeStyle=this.color; ctx.stroke();
+                } else {
+                    if(this.config.b) this.config.b.forEach(b => {
+                        ctx.save(); ctx.rotate(this.angle); ctx.translate(b.x||0, b.y||0); ctx.rotate((b.a||0)*Math.PI/180);
+                        ctx.fillStyle = '#999'; ctx.strokeStyle = '#555'; ctx.lineWidth = 3;
+                        ctx.fillRect(0, -(b.w||18)/2, (b.l||35), (b.w||18)); ctx.strokeRect(0, -(b.w||18)/2, (b.l||35), (b.w||18));
+                        ctx.restore();
+                    });
+                    if (this.config.swarm) {
+                        for(let i=0; i<3; i++) {
+                            const sx = Math.cos(this.orbitAngle+(i*Math.PI*2/3))*80, sy = Math.sin(this.orbitAngle+(i*Math.PI*2/3))*80;
+                            ctx.beginPath(); ctx.arc(sx, sy, 10, 0, Math.PI*2); ctx.fillStyle=this.color; ctx.fill(); ctx.stroke();
+                        }
                     }
+                    if (this.config.aura) {
+                        ctx.beginPath(); ctx.arc(0,0, this.config.aura==='chrono'?500:300, 0, Math.PI*2);
+                        ctx.fillStyle = this.config.aura==='chrono' ? 'rgba(100,200,255,0.1)' : 'rgba(255,50,50,0.1)'; ctx.fill();
+                    }
+                    ctx.beginPath(); ctx.arc(0, 0, this.radius, 0, Math.PI*2); ctx.fillStyle = this.color; ctx.fill(); ctx.strokeStyle = '#555'; ctx.lineWidth = 3; ctx.stroke();
                 }
-
-                // Body
-                ctx.beginPath();
-                ctx.arc(0, 0, this.radius * (this.config.maxHpMult ? 1.5 : 1), 0, Math.PI * 2);
-                ctx.fillStyle = this.color; ctx.fill();
-                ctx.strokeStyle = '#555'; ctx.lineWidth = 3; ctx.stroke();
-                
-                // Auto Turret Visuals
-                if (this.config.autoTurrets) {
-                    ctx.beginPath(); ctx.arc(0,0, 10, 0, Math.PI*2);
-                    ctx.fillStyle = '#999'; ctx.fill(); ctx.stroke();
-                }
-
                 ctx.restore();
-                if(this.alpha > 0.5) drawHealthBar(ctx, this.x, this.y, this.hp, this.maxHp, this.radius * 1.5 + 10);
+                if(this.alpha > 0.5) drawHealthBar(ctx, this.x, this.y, this.hp, this.maxHp, this.radius + 15, this.radius*2);
             }
         }
 
@@ -356,18 +402,26 @@
             constructor(x, y) { super(x, y, 'blue'); }
             update(keys, mouseWorldPos, game) {
                 let dx = 0, dy = 0;
+                let speedMult = this.slowed ? 0.1 : 1; this.slowed = false;
+                
                 if (keys['KeyW']) dy -= 1; if (keys['KeyS']) dy += 1;
                 if (keys['KeyA']) dx -= 1; if (keys['KeyD']) dx += 1;
                 if (dx !== 0 && dy !== 0) { const l = Math.hypot(dx, dy); dx /= l; dy /= l; }
 
-                this.x += dx * this.moveSpeed; this.y += dy * this.moveSpeed;
+                this.x += dx * this.moveSpeed * speedMult; this.y += dy * this.moveSpeed * speedMult;
                 this.x = Math.max(this.radius, Math.min(MAP_WIDTH - this.radius, this.x));
                 this.y = Math.max(this.radius, Math.min(MAP_HEIGHT - this.radius, this.y));
 
-                this.angle = Math.atan2(mouseWorldPos.y - this.y, mouseWorldPos.x - this.x);
+                if(this.config.passive !== 'quasar') this.angle = Math.atan2(mouseWorldPos.y - this.y, mouseWorldPos.x - this.x);
 
+                if (keys['Space']) this.useAbility(game, mouseWorldPos);
+                
                 this.updateTank(game, dx !== 0 || dy !== 0);
-                if (game.isShooting) this.shoot(game);
+                
+                if (game.isShooting) {
+                    if (this.config.ability === 'orbital') this.useAbility(game, mouseWorldPos);
+                    else this.shoot(game);
+                }
             }
         }
 
@@ -375,46 +429,47 @@
             constructor(x, y, team) {
                 super(x, y, team);
                 this.wanderTimer = 0; this.target = null;
-                
-                // Randomly assign a class based on a generated level
-                this.level = Math.floor(Math.random() * 100);
+                // Force spawn as random high-tier for cosmic chaos
+                this.level = Math.floor(Math.random() * 200) + 20; 
                 let availableTier = 1;
-                for(let i=1; i<EVOLUTION_LEVELS.length; i++) {
-                    if (this.level >= EVOLUTION_LEVELS[i]) availableTier = i+1;
-                }
-                const possibleClasses = getTierClasses(availableTier);
-                this.evolve(possibleClasses[Math.floor(Math.random() * possibleClasses.length)]);
+                for(let i=1; i<EVOLUTION_LEVELS.length; i++) if (this.level >= EVOLUTION_LEVELS[i]) availableTier = i+1;
                 
-                for(let i=0; i<Math.min(this.level, 42); i++) this.upgradeStat(Math.floor(Math.random()*6));
-                this.hp = this.maxHp;
-                this.xpValue = 500 + (this.level * 100);
+                const possibleClasses = getTierClasses(Math.min(availableTier, 20)); // Up to T20 enemies!
+                this.evolve(randItem(possibleClasses));
+                for(let i=0; i<42; i++) this.upgradeStat(Math.floor(Math.random()*6));
+                this.hp = this.maxHp; this.xpValue = 1000 + (this.level * 200);
             }
 
             update(game) {
-                let closestDist = 800; this.target = null;
+                let speedMult = this.slowed ? 0.1 : 1; this.slowed = false;
+                let closestDist = 1500; this.target = null;
+                
+                // Aggressive AABB checking for targets
+                const viewR = 1500;
                 const check = (entities) => {
                     for (let e of entities) {
                         if (e.team === this.team || e.markedForDeletion) continue;
+                        if (Math.abs(e.x-this.x) > viewR || Math.abs(e.y-this.y) > viewR) continue;
                         const dist = Math.hypot(e.x - this.x, e.y - this.y);
                         if (dist < closestDist) { closestDist = dist; this.target = e; }
                     }
                 };
-                check(game.enemies); check(game.shapes);
-                if (game.player && game.player.team !== this.team) check([game.player]);
+                check(game.enemies); check([game.player]);
 
                 let isMoving = false;
                 if (this.target) {
                     const dx = this.target.x - this.x, dy = this.target.y - this.y;
-                    this.angle = Math.atan2(dy, dx);
-                    let spd = this.moveSpeed;
-                    if (closestDist < 300) spd = -spd * 0.5; else if (closestDist < 500) spd = 0;
+                    if(this.config.passive !== 'quasar') this.angle = Math.atan2(dy, dx);
+                    let spd = this.moveSpeed * speedMult;
+                    if (closestDist < 400) spd = -spd * 0.5; else if (closestDist < 700) spd = 0;
                     this.x += Math.cos(this.angle) * spd; this.y += Math.sin(this.angle) * spd;
-                    this.shoot(game);
+                    if(this.config.ability === 'orbital' && Math.random()<0.02) this.useAbility(game, this.target);
+                    else this.shoot(game);
                     isMoving = spd !== 0;
                 } else {
                     this.wanderTimer--;
                     if (this.wanderTimer <= 0) { this.angle = Math.random() * Math.PI * 2; this.wanderTimer = 60 + Math.random() * 120; }
-                    this.x += Math.cos(this.angle) * this.moveSpeed; this.y += Math.sin(this.angle) * this.moveSpeed;
+                    this.x += Math.cos(this.angle) * this.moveSpeed * speedMult; this.y += Math.sin(this.angle) * this.moveSpeed * speedMult;
                     isMoving = true;
                 }
 
@@ -426,9 +481,9 @@
 
         class Game {
             constructor() {
-                this.canvas = document.getElementById('gameCanvas'); this.ctx = this.canvas.getContext('2d');
+                this.canvas = document.getElementById('gameCanvas'); this.ctx = this.canvas.getContext('2d', {alpha: false});
                 this.keys = {}; this.mouseX = 0; this.mouseY = 0; this.isShooting = false;
-                this.camera = { x: 0, y: 0, zoom: 1 }; this.state = 'PLAYING'; this.ticks = 0;
+                this.camera = { x: MAP_WIDTH/2, y: MAP_HEIGHT/2, zoom: 1 }; this.state = 'PLAYING'; this.ticks = 0;
                 this.setupInputs(); this.resize(); window.addEventListener('resize', () => this.resize());
                 this.reset(); requestAnimationFrame(() => this.loop());
             }
@@ -436,7 +491,7 @@
             reset() {
                 this.player = new Player(MAP_WIDTH / 2, MAP_HEIGHT / 2);
                 this.bullets = []; this.shapes = []; this.enemies = []; this.state = 'PLAYING';
-                for (let i = 0; i < 400; i++) this.shapes.push(new Shape(Math.random()*MAP_WIDTH, Math.random()*MAP_HEIGHT, ['square','triangle','pentagon'][Math.floor(Math.random()*3)]));
+                for (let i = 0; i < 400; i++) this.shapes.push(new Shape(Math.random()*MAP_WIDTH, Math.random()*MAP_HEIGHT, randItem(['square','triangle','pentagon'])));
                 for (let i = 0; i < 30; i++) this.enemies.push(new EnemyTank(Math.random()*MAP_WIDTH, Math.random()*MAP_HEIGHT, Math.random()>0.5?'red':'blue'));
             }
 
@@ -453,14 +508,10 @@
                     if (e.button === 0) {
                         if (this.state === 'GAMEOVER') this.reset();
                         else if (this.activeEvolutions && this.activeEvolutions.length > 0) {
-                            // Check UI click for evolutions
-                            const boxW = 120, boxH = 40, startX = this.canvas.width/2 - (this.activeEvolutions.length*boxW)/2;
-                            const y = 80;
+                            const boxW = 150, boxH = 40, startX = this.canvas.width/2 - (this.activeEvolutions.length*boxW)/2;
                             this.activeEvolutions.forEach((ev, i) => {
                                 const bx = startX + i*boxW;
-                                if(this.mouseX >= bx && this.mouseX <= bx+boxW-10 && this.mouseY >= y && this.mouseY <= y+boxH) {
-                                    this.player.evolve(ev);
-                                }
+                                if(this.mouseX >= bx && this.mouseX <= bx+boxW-10 && this.mouseY >= 80 && this.mouseY <= 120) this.player.evolve(ev);
                             });
                         } else this.isShooting = true;
                     }
@@ -468,21 +519,24 @@
                 window.addEventListener('mouseup', e => { if(e.button===0) this.isShooting = false; });
             }
 
-            getMouseWorldPos() { return { x: (this.mouseX - this.canvas.width/2) / this.camera.zoom + this.player.x, y: (this.mouseY - this.canvas.height/2) / this.camera.zoom + this.player.y }; }
+            getMouseWorldPos() { return { x: (this.mouseX - this.canvas.width/2) / this.camera.zoom + this.camera.x, y: (this.mouseY - this.canvas.height/2) / this.camera.zoom + this.camera.y }; }
 
             handlePhysics(e1, e2, dmg) {
-                const dx = e1.x - e2.x, dy = e1.y - e2.y, dist = Math.hypot(dx, dy), minDist = e1.radius + e2.radius;
-                if (dist < minDist) {
+                const dx = Math.abs(e1.x - e2.x), dy = Math.abs(e1.y - e2.y), maxR = e1.radius + e2.radius;
+                if (dx > maxR || dy > maxR) return; // AABB Optimization!
+                
+                const dist = Math.hypot(dx, dy);
+                if (dist < maxR) {
                     if (e1.team !== e2.team) {
                         e1.hp -= dmg; e2.hp -= dmg;
                         if (e1.hp<=0 && e2.addXp && e1.xpValue) e2.addXp(e1.xpValue);
                         if (e2.hp<=0 && e1.addXp && e2.xpValue) e1.addXp(e2.xpValue);
                     }
                     if (e1.hp<=0) e1.markedForDeletion = true; if (e2.hp<=0) e2.markedForDeletion = true;
-                    if (dist > 0) {
-                        const push = (minDist - dist)*0.5;
-                        e1.x += (dx/dist)*push; e1.y += (dy/dist)*push;
-                        e2.x -= (dx/dist)*push; e2.y -= (dy/dist)*push;
+                    if (dist > 0 && e1.classType !== 'The Monolith' && e2.classType !== 'The Monolith') {
+                        const pushX = ((e1.x-e2.x)/dist)*(maxR-dist)*0.5;
+                        const pushY = ((e1.y-e2.y)/dist)*(maxR-dist)*0.5;
+                        e1.x += pushX; e1.y += pushY; e2.x -= pushX; e2.y -= pushY;
                     }
                 }
             }
@@ -494,103 +548,115 @@
                 this.player.update(this.keys, this.getMouseWorldPos(), this);
                 if (this.player.hp <= 0) this.state = 'GAMEOVER';
 
-                // Target Zoom based on FOV
+                // Smooth Camera
                 const targetZoom = 1 / (this.player.config.fov || 1);
-                this.camera.zoom += (targetZoom - this.camera.zoom) * 0.1;
-                this.camera.x = this.player.x; this.camera.y = this.player.y;
+                this.camera.zoom += (targetZoom - this.camera.zoom) * 0.05;
+                this.camera.x += (this.player.x - this.camera.x) * 0.1;
+                this.camera.y += (this.player.y - this.camera.y) * 0.1;
 
                 this.bullets.forEach(b => b.update(this));
                 this.shapes.forEach(s => s.update());
                 this.enemies.forEach(e => e.update(this));
 
-                // Collisions
-                const all = [this.player, ...this.enemies, ...this.shapes].filter(e => e && !e.markedForDeletion);
+                // AABB Optimized Collisions
+                const all = [this.player, ...this.enemies, ...this.shapes].filter(e => !e.markedForDeletion);
                 for (let i = this.bullets.length - 1; i >= 0; i--) {
                     const b = this.bullets[i];
+                    if (b.life > 40 && b.type === 'orbital') continue; // Warning phase, no damage
+
                     for (let j = 0; j < all.length; j++) {
                         const e = all[j];
                         if (b.team === e.team) continue;
+                        
+                        // AABB check avoids hypot lag
+                        if (Math.abs(b.x - e.x) > b.radius + e.radius || Math.abs(b.y - e.y) > b.radius + e.radius) continue;
+                        
                         if (Math.hypot(b.x - e.x, b.y - e.y) < b.radius + e.radius) {
                             const dmg = Math.min(b.hp, e.hp);
-                            e.hp -= b.damage; b.hp -= dmg;
+                            if (['laser','railgun','supernova_blast','shockwave','orbital'].includes(b.type)) { e.hp -= b.damage; } // Piercing
+                            else { e.hp -= b.damage; b.hp -= dmg; }
+
                             if (e.hp <= 0) {
                                 e.markedForDeletion = true;
                                 if (b.owner && b.owner.addXp && e.xpValue) b.owner.addXp(e.xpValue);
-                                // Necromancer logic
-                                if (b.owner.config && b.owner.classType === 'Necromancer' && e instanceof Shape && e.type === 'square') {
+                                if (b.owner.classType === 'Necromancer' && e instanceof Shape && e.type === 'square') {
                                    this.bullets.push(new Bullet(e.x, e.y, 0, b.owner, {type:'square_drone', d:2, s:1.5}));
                                 }
                             }
-                            if (b.hp <= 0) { b.markedForDeletion = true; break; }
+                            if (b.hp <= 0 && b.type !== 'laser') { b.markedForDeletion = true; break; }
                         }
                     }
                 }
-                for (let i=0; i<all.length; i++) for (let j=i+1; j<all.length; j++) this.handlePhysics(all[i], all[j], 1);
+                
+                for (let i=0; i<all.length; i++) for (let j=i+1; j<all.length; j++) this.handlePhysics(all[i], all[j], 2);
 
                 this.bullets = this.bullets.filter(b => !b.markedForDeletion);
                 this.shapes = this.shapes.filter(s => !s.markedForDeletion);
                 this.enemies = this.enemies.filter(e => !e.markedForDeletion);
 
-                if (this.shapes.length < 300) this.shapes.push(new Shape(Math.random()*MAP_WIDTH, Math.random()*MAP_HEIGHT, ['square','triangle','pentagon'][Math.floor(Math.random()*3)]));
-                if (this.enemies.length < 25) this.enemies.push(new EnemyTank(Math.random()*MAP_WIDTH, Math.random()*MAP_HEIGHT, Math.random()>0.5?'red':'blue'));
+                if (this.shapes.length < 300) this.shapes.push(new Shape(Math.random()*MAP_WIDTH, Math.random()*MAP_HEIGHT, randItem(['square','triangle','pentagon'])));
+                if (this.enemies.length < 35) this.enemies.push(new EnemyTank(Math.random()*MAP_WIDTH, Math.random()*MAP_HEIGHT, Math.random()>0.5?'red':'blue'));
             }
 
             drawUI() {
                 const bw = this.canvas.width * 0.5, bh = 20, bx = (this.canvas.width - bw) / 2, by = this.canvas.height - 30;
-                this.ctx.fillStyle = '#555'; this.ctx.fillRect(bx, by, bw, bh);
+                this.ctx.fillStyle = '#222'; this.ctx.fillRect(bx, by, bw, bh);
                 this.ctx.fillStyle = '#ffd700'; this.ctx.fillRect(bx, by, bw * (this.player.xp / this.player.nextLevelXp), bh);
-                this.ctx.strokeStyle = '#333'; this.ctx.strokeRect(bx, by, bw, bh);
+                this.ctx.strokeStyle = '#000'; this.ctx.strokeRect(bx, by, bw, bh);
                 this.ctx.fillStyle = '#fff'; this.ctx.font = 'bold 14px sans-serif'; this.ctx.textAlign = 'center';
                 this.ctx.fillText(`Level ${this.player.level} - ${this.player.classType}`, this.canvas.width / 2, by + 15);
 
                 const sx = 20, sy = this.canvas.height - 250;
                 if (this.player.skillPoints > 0) {
-                    this.ctx.textAlign = 'left'; this.ctx.fillStyle = '#333'; this.ctx.font = 'bold 18px sans-serif';
+                    this.ctx.textAlign = 'left'; this.ctx.fillStyle = '#fff'; this.ctx.font = 'bold 18px sans-serif';
                     this.ctx.fillText(`x${this.player.skillPoints} Upgrades Available!`, sx, sy - 15);
                 }
                 for (let i = 0; i < 6; i++) {
                     const lvl = this.player.statLevels[i], y = sy + (i * 35);
                     this.ctx.textAlign = 'left'; this.ctx.font = 'bold 14px sans-serif';
-                    this.ctx.fillStyle = this.player.skillPoints > 0 && lvl < this.player.maxStatLevel ? '#333' : '#888';
+                    this.ctx.fillStyle = this.player.skillPoints > 0 && lvl < this.player.maxStatLevel ? '#fff' : '#888';
                     this.ctx.fillText(`[${i + 1}] ${STAT_NAMES[i]}`, sx, y + 16);
                     for (let p = 0; p < this.player.maxStatLevel; p++) {
-                        this.ctx.fillStyle = p < lvl ? STAT_COLORS[i] : '#ccc';
+                        this.ctx.fillStyle = p < lvl ? STAT_COLORS[i] : '#444';
                         this.ctx.fillRect(sx + 140 + (p * 15), y + 5, 12, 14);
-                        this.ctx.strokeStyle = '#555'; this.ctx.strokeRect(sx + 140 + (p * 15), y + 5, 12, 14);
                     }
                 }
 
-                // Evolution UI Menu
+                if (this.player.config.ability) {
+                    this.ctx.fillStyle = this.player.abilityCooldown <= 0 ? '#6abcf1' : '#555';
+                    this.ctx.font = 'bold 16px sans-serif'; this.ctx.textAlign = 'right';
+                    this.ctx.fillText(`[SPACE] Ability Ready`, this.canvas.width - 20, this.canvas.height - 20);
+                }
+
+                // Evolution UI
                 let currentTierIdx = this.player.config.tier;
                 if (currentTierIdx < EVOLUTION_LEVELS.length && this.player.level >= EVOLUTION_LEVELS[currentTierIdx]) {
                     this.activeEvolutions = getTierClasses(currentTierIdx + 1);
                     if (this.activeEvolutions.length > 0) {
-                        this.ctx.fillStyle = 'rgba(255,255,255,0.8)';
-                        this.ctx.fillRect(0, 0, this.canvas.width, 150);
-                        this.ctx.textAlign = 'center'; this.ctx.fillStyle = '#333'; this.ctx.font = 'bold 24px sans-serif';
+                        this.ctx.fillStyle = 'rgba(0,0,0,0.8)'; this.ctx.fillRect(0, 0, this.canvas.width, 150);
+                        this.ctx.textAlign = 'center'; this.ctx.fillStyle = '#fff'; this.ctx.font = 'bold 24px sans-serif';
                         this.ctx.fillText(`Evolution Available! (Tier ${currentTierIdx + 1})`, this.canvas.width/2, 40);
                         
-                        const boxW = 120, boxH = 40, startX = this.canvas.width/2 - (this.activeEvolutions.length*boxW)/2;
+                        const boxW = 150, boxH = 40, startX = this.canvas.width/2 - (this.activeEvolutions.length*boxW)/2;
                         this.ctx.font = 'bold 14px sans-serif';
                         this.activeEvolutions.forEach((ev, i) => {
                             const bx = startX + i*boxW;
                             this.ctx.fillStyle = '#6abcf1'; this.ctx.fillRect(bx, 80, boxW-10, boxH);
-                            this.ctx.strokeStyle = '#333'; this.ctx.strokeRect(bx, 80, boxW-10, boxH);
                             this.ctx.fillStyle = '#fff'; this.ctx.fillText(ev, bx + (boxW-10)/2, 105);
                         });
                     }
-                } else { this.activeEvolutions = null; }
+                } else this.activeEvolutions = null;
             }
 
             draw() {
-                this.ctx.fillStyle = '#cdcdcd'; this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                this.ctx.fillStyle = '#0b0b1a'; this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
                 this.ctx.save();
                 this.ctx.translate(this.canvas.width/2, this.canvas.height/2);
                 this.ctx.scale(this.camera.zoom, this.camera.zoom);
                 this.ctx.translate(-this.camera.x, -this.camera.y);
 
-                // Grid (Optimized for zoom)
-                this.ctx.strokeStyle = 'rgba(0,0,0,0.1)'; this.ctx.lineWidth = 1; this.ctx.beginPath();
+                // Grid optimizations
+                this.ctx.strokeStyle = 'rgba(255,255,255,0.05)'; this.ctx.lineWidth = 2; this.ctx.beginPath();
                 const viewW = this.canvas.width / this.camera.zoom, viewH = this.canvas.height / this.camera.zoom;
                 const startX = Math.max(0, Math.floor((this.camera.x - viewW/2)/GRID_SIZE)*GRID_SIZE);
                 const startY = Math.max(0, Math.floor((this.camera.y - viewH/2)/GRID_SIZE)*GRID_SIZE);
@@ -599,21 +665,25 @@
                 for (let x = startX; x <= endX; x += GRID_SIZE) { this.ctx.moveTo(x, startY); this.ctx.lineTo(x, endY); }
                 for (let y = startY; y <= endY; y += GRID_SIZE) { this.ctx.moveTo(startX, y); this.ctx.lineTo(endX, y); }
                 this.ctx.stroke();
+                
+                this.ctx.strokeStyle = '#555'; this.ctx.lineWidth = 10; this.ctx.strokeRect(0, 0, MAP_WIDTH, MAP_HEIGHT);
 
-                this.ctx.strokeStyle = '#333'; this.ctx.lineWidth = 5; this.ctx.strokeRect(0, 0, MAP_WIDTH, MAP_HEIGHT);
-
+                // Draw order matters
                 this.shapes.forEach(s => s.draw(this.ctx));
-                this.bullets.forEach(b => b.draw(this.ctx));
                 this.enemies.forEach(e => e.draw(this.ctx));
+                this.bullets.forEach(b => { if (b.type !== 'orbital') b.draw(this.ctx); });
                 if (this.state === 'PLAYING') this.player.draw(this.ctx);
+                
+                // Draw orbitals last so they appear over everything
+                this.bullets.forEach(b => { if (b.type === 'orbital') b.draw(this.ctx); });
 
                 this.ctx.restore();
 
                 if (this.state === 'PLAYING') this.drawUI();
                 else {
-                    this.ctx.fillStyle = 'rgba(0, 0, 0, 0.6)'; this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                    this.ctx.fillStyle = 'rgba(0, 0, 0, 0.8)'; this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
                     this.ctx.fillStyle = '#fff'; this.ctx.textAlign = 'center'; this.ctx.font = 'bold 60px sans-serif';
-                    this.ctx.fillText('GAME OVER', this.canvas.width / 2, this.canvas.height / 2 - 20);
+                    this.ctx.fillText('COSMIC COLLAPSE', this.canvas.width / 2, this.canvas.height / 2 - 20);
                     this.ctx.font = '24px sans-serif'; this.ctx.fillText(`Class: ${this.player.classType} (Lv.${this.player.level})`, this.canvas.width/2, this.canvas.height/2 + 20);
                     this.ctx.fillText('Click to restart', this.canvas.width / 2, this.canvas.height / 2 + 60);
                 }
